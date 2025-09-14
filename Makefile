@@ -175,5 +175,25 @@ release: clean build-universal
 	@echo "Preparing release..."
 	@./scripts/prepare-release.sh
 
+# Workflow testing
+test-workflows:
+	@echo "Testing workflows locally..."
+	@chmod +x test-workflow-local.sh
+	@./test-workflow-local.sh
+
+test-workflows-act:
+	@echo "Testing workflows with act..."
+	@chmod +x test-workflows-with-act.sh
+	@./test-workflows-with-act.sh
+
+test-workflows-dry-run:
+	@echo "Dry run of workflows with act..."
+	@act --dry-run
+
+list-workflows:
+	@echo "Listing available workflows..."
+	@act -l
+
 help:
-	@echo "Targets: build build-all build-russian build-enterprise build-packages build-containers build-vm build-universal test test-race test-coverage install uninstall deps lint fmt vet security-scan bench docs release clean help" 
+	@echo "Targets: build build-all build-russian build-enterprise build-packages build-containers build-vm build-universal test test-race test-coverage install uninstall deps lint fmt vet security-scan bench docs release clean help"
+	@echo "Workflow testing: test-workflows test-workflows-act test-workflows-dry-run list-workflows" 
