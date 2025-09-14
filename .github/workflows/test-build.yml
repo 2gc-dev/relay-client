@@ -1,0 +1,71 @@
+name: Test Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: '1.25'
+
+jobs:
+  test-build:
+    name: Test Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Build application
+      run: |
+        go build -ldflags="-s -w" -o cloudbridge-client ./cmd/cloudbridge-client
+
+    - name: Test help command
+      run: |
+        ./cloudbridge-client --help
+
+    - name: Test service command
+      run: |
+        ./cloudbridge-client service --help
+
+    - name: Test P2P command
+      run: |
+        ./cloudbridge-client p2p --help
+
+    - name: Test tunnel command
+      run: |
+        ./cloudbridge-client tunnel --help
+
+    - name: Check binary size
+      run: |
+        ls -lh cloudbridge-client
+        echo "Binary size: $(stat -c%s cloudbridge-client) bytes"
+
+    - name: Test configuration loading
+      run: |
+        # Test with default config
+        ./cloudbridge-client --config config.yaml --help >/dev/null
+        echo "✅ Default config loaded successfully"
+        
+        # Test with test config
+        ./cloudbridge-client --config config-test.yaml --help >/dev/null
+        echo "✅ Test config loaded successfully"
+
+    - name: Run basic tests
+      run: |
+        go test -v ./pkg/config/...
+        go test -v ./pkg/types/...
+        echo "✅ Basic tests passed"
