@@ -1,7 +1,6 @@
 package wireguard
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -192,7 +191,9 @@ func (c *WireGuardClient) sendHandshake(handshake *WireGuardHandshake) error {
 
 // waitForHandshakeResponse ожидает ответ на handshake
 func (c *WireGuardClient) waitForHandshakeResponse() error {
-	c.connection.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := c.connection.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fmt.Errorf("ошибка установки таймаута чтения: %v", err)
+	}
 
 	buffer := make([]byte, 1024)
 	n, err := c.connection.Read(buffer)
@@ -236,21 +237,3 @@ func (c *WireGuardClient) Close() error {
 	return nil
 }
 
-// generateKeys генерирует пару ключей WireGuard
-func (c *WireGuardClient) generateKeys() error {
-	// Генерируем приватный ключ
-	privateKey := make([]byte, 32)
-	if _, err := rand.Read(privateKey); err != nil {
-		return fmt.Errorf("ошибка генерации приватного ключа: %v", err)
-	}
-
-	// В реальной реализации здесь будет генерация публичного ключа
-	// из приватного через криптографические операции
-	publicKey := make([]byte, 32)
-	copy(publicKey, privateKey) // Упрощенная версия для примера
-
-	c.config.PrivateKey = fmt.Sprintf("%x", privateKey)
-	c.config.PublicKey = fmt.Sprintf("%x", publicKey)
-
-	return nil
-}
