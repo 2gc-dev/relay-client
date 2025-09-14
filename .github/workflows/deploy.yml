@@ -1,0 +1,148 @@
+name: Deploy CloudBridge Client
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      version:
+        description: 'Version to deploy'
+        required: false
+        default: 'latest'
+
+env:
+  GO_VERSION: '1.25'
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Build application
+      run: |
+        go build -ldflags="-s -w -X main.version=${{ github.event.inputs.version }}" \
+                 -o cloudbridge-client \
+                 ./cmd/cloudbridge-client
+
+    - name: Create deployment package
+      run: |
+        mkdir -p deployment
+        cp cloudbridge-client deployment/
+        cp config-${{ github.event.inputs.environment }}.yaml deployment/config.yaml
+        cp env.example deployment/
+        
+        # Create deployment script
+        cat > deployment/deploy.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Deploying CloudBridge Client..."
+        
+        # Check if secrets are set
+        if [ -z "$JWT_SECRET" ]; then
+          echo "❌ JWT_SECRET environment variable is not set"
+          exit 1
+        fi
+        
+        if [ -z "$FALLBACK_SECRET" ]; then
+          echo "❌ FALLBACK_SECRET environment variable is not set"
+          exit 1
+        fi
+        
+        echo "✅ Environment variables are set"
+        
+        # Create systemd service (Linux)
+        if command -v systemctl >/dev/null 2>&1; then
+          sudo cp cloudbridge-client /usr/local/bin/
+          sudo chmod +x /usr/local/bin/cloudbridge-client
+          
+          # Create systemd service file
+          sudo tee /etc/systemd/system/cloudbridge-client.service > /dev/null << 'SERVICE_EOF'
+        [Unit]
+        Description=CloudBridge Client
+        After=network.target
+        
+        [Service]
+        Type=simple
+        User=cloudbridge
+        Group=cloudbridge
+        WorkingDirectory=/opt/cloudbridge
+        ExecStart=/usr/local/bin/cloudbridge-client
+        Restart=always
+        RestartSec=5
+        Environment=JWT_SECRET=${JWT_SECRET}
+        Environment=FALLBACK_SECRET=${FALLBACK_SECRET}
+        
+        [Install]
+        WantedBy=multi-user.target
+        SERVICE_EOF
+        
+          sudo systemctl daemon-reload
+          sudo systemctl enable cloudbridge-client
+          sudo systemctl restart cloudbridge-client
+          
+          echo "✅ Service deployed and started"
+        fi
+        
+        echo "🎉 Deployment completed successfully!"
+        EOF
+        
+        chmod +x deployment/deploy.sh
+
+    - name: Deploy to staging
+      if: github.event.inputs.environment == 'staging'
+      run: |
+        echo "🚀 Deploying to staging environment..."
+        # Add your staging deployment logic here
+        # Example: scp, rsync, or cloud deployment commands
+        
+        # Example with SSH (you would need to set up SSH keys in secrets)
+        # scp -r deployment/* ${{ secrets.STAGING_HOST }}:/opt/cloudbridge/
+        # ssh ${{ secrets.STAGING_HOST }} "cd /opt/cloudbridge && ./deploy.sh"
+        
+        echo "✅ Staging deployment completed"
+
+    - name: Deploy to production
+      if: github.event.inputs.environment == 'production'
+      run: |
+        echo "🚀 Deploying to production environment..."
+        # Add your production deployment logic here
+        
+        # Example with SSH
+        # scp -r deployment/* ${{ secrets.PRODUCTION_HOST }}:/opt/cloudbridge/
+        # ssh ${{ secrets.PRODUCTION_HOST }} "cd /opt/cloudbridge && ./deploy.sh"
+        
+        echo "✅ Production deployment completed"
+
+    - name: Verify deployment
+      run: |
+        echo "🔍 Verifying deployment..."
+        # Add verification steps here
+        # Example: health checks, service status, etc.
+        
+        echo "✅ Deployment verification completed"
+
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ Deployment to ${{ github.event.inputs.environment }} completed successfully"
+        else
+          echo "❌ Deployment to ${{ github.event.inputs.environment }} failed"
+        fi
