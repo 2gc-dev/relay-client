@@ -26,13 +26,7 @@ builds:
     mod_timestamp: '{{ .CommitTimestamp }}'
 
 archives:
-  - id: default
-    builds: [cloudbridge]
-    name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}'
-    format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
+  - name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}'
     files:
       - README.md
       - LICENSE*
