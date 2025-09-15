@@ -150,13 +150,21 @@ func (rs *RetryStrategy) ShouldRetry(err error) bool {
 		return false
 	}
 
-	relayErr, _ := HandleError(err)
+	relayErr, handleErr := HandleError(err)
+	if handleErr != nil {
+		// Log error but continue with retry logic
+		return false
+	}
 	return relayErr != nil && relayErr.IsRetryable()
 }
 
 // GetNextDelay calculates the delay for the next retry
 func (rs *RetryStrategy) GetNextDelay(err error) time.Duration {
-	relayErr, _ := HandleError(err)
+	relayErr, handleErr := HandleError(err)
+	if handleErr != nil {
+		// Log error but continue with default delay
+		return time.Second
+	}
 	if relayErr == nil {
 		return time.Second
 	}

@@ -263,7 +263,7 @@ func (am *AuthManager) validateKeycloakToken(tokenString string) (*jwt.Token, er
 // validateKeycloakClaims validates Keycloak-specific claims
 func (am *AuthManager) validateKeycloakClaims(claims jwt.Claims) error {
 	// Validate issuer
-	if issuer, ok := claims.(jwt.MapClaims)["iss"]; ok {
+	if issuer, ok := claims.(jwt.MapClaims)["iss"]; ok { //nolint:errcheck
 		expectedIssuer := fmt.Sprintf("%s/realms/%s", am.config.Keycloak.ServerURL, am.config.Keycloak.Realm)
 		if issuer != expectedIssuer {
 			return fmt.Errorf("invalid issuer: expected %s, got %s", expectedIssuer, issuer)
@@ -271,7 +271,7 @@ func (am *AuthManager) validateKeycloakClaims(claims jwt.Claims) error {
 	}
 
 	// Validate audience
-	if aud, ok := claims.(jwt.MapClaims)["aud"]; ok {
+	if aud, ok := claims.(jwt.MapClaims)["aud"]; ok { //nolint:errcheck
 		if aud != am.config.Keycloak.ClientID {
 			return fmt.Errorf("invalid audience: expected %s, got %s", am.config.Keycloak.ClientID, aud)
 		}

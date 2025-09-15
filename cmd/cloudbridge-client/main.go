@@ -40,7 +40,7 @@ var (
 func main() {
 	// Ensure cobra is used to prevent go mod tidy from removing it
 	_ = cobra.Command{}
-	
+
 	rootCmd := &cobra.Command{
 		Use:   "cloudbridge-client",
 		Short: "CloudBridge Relay Client",
@@ -171,7 +171,10 @@ func connectWithRetry(client *relay.Client) error {
 			return nil
 		}
 
-		relayErr, _ := errors.HandleError(err)
+		relayErr, handleErr := errors.HandleError(err)
+		if handleErr != nil {
+			log.Printf("Error handling error: %v", handleErr)
+		}
 		if relayErr == nil || !retryStrategy.ShouldRetry(err) {
 			return err
 		}
@@ -192,7 +195,10 @@ func authenticateWithRetry(client *relay.Client, token string) error {
 			return nil
 		}
 
-		relayErr, _ := errors.HandleError(err)
+		relayErr, handleErr := errors.HandleError(err)
+		if handleErr != nil {
+			log.Printf("Error handling error: %v", handleErr)
+		}
 		if relayErr == nil || !retryStrategy.ShouldRetry(err) {
 			return err
 		}
@@ -213,7 +219,10 @@ func createTunnelWithRetry(client *relay.Client, tunnelID string, localPort int,
 			return nil
 		}
 
-		relayErr, _ := errors.HandleError(err)
+		relayErr, handleErr := errors.HandleError(err)
+		if handleErr != nil {
+			log.Printf("Error handling error: %v", handleErr)
+		}
 		if relayErr == nil || !retryStrategy.ShouldRetry(err) {
 			return err
 		}
@@ -477,7 +486,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, input, 0644)
+	return os.WriteFile(dst, input, 0644) //nolint:gosec // Config files need readable permissions
 }
 
 // runP2P runs the P2P mesh mode

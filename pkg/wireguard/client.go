@@ -238,4 +238,3 @@ func (c *WireGuardClient) Close() error {
 	}
 	return nil
 }
-
