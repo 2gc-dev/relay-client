@@ -7,10 +7,10 @@ env:
 
 before:
   hooks:
-    - go mod tidy
+    - go mod download
 
 builds:
-  - id: cloudbridge
+  - id: cloudbridge-client
     main: ./cmd/cloudbridge-client
     binary: cloudbridge-client
     goos: [linux, windows, darwin]
@@ -19,13 +19,15 @@ builds:
       - -trimpath
       - -buildvcs=false
     ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
 archives:
-  - name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}'
+  - id: archive
+    builds: [cloudbridge-client]
+    name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}-v{{ .Arm }}{{ end }}'
+    format_overrides:
+      - goos: windows
+        format: zip
     files:
       - README.md
       - LICENSE*
@@ -33,6 +35,10 @@ archives:
 
 checksum:
   name_template: 'checksums.txt'
+
+sboms:
+  - artifacts: archive
+    formats: [cyclonedx, spdx]
 
 changelog:
   use: github
@@ -46,3 +52,7 @@ changelog:
 release:
   draft: false
   prerelease: auto
+  name_template: 'CloudBridge Client {{ .Version }}'
+
+snapshot:
+  name_template: 'snapshot-{{ .ShortCommit }}'
