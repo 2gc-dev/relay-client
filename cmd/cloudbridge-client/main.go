@@ -241,10 +241,22 @@ func createP2PCommand() *cobra.Command {
 	p2pCmd.Flags().IntVar(&meshPort, "mesh-port", 51820, "WireGuard mesh port")
 
 	// Mark required flags
-	p2pCmd.MarkFlagRequired("peer-id")
-	p2pCmd.MarkFlagRequired("endpoint")
-	p2pCmd.MarkFlagRequired("public-key")
-	p2pCmd.MarkFlagRequired("private-key")
+	if err := p2pCmd.MarkFlagRequired("peer-id"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
+		os.Exit(1)
+	}
+	if err := p2pCmd.MarkFlagRequired("endpoint"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
+		os.Exit(1)
+	}
+	if err := p2pCmd.MarkFlagRequired("public-key"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
+		os.Exit(1)
+	}
+	if err := p2pCmd.MarkFlagRequired("private-key"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
+		os.Exit(1)
+	}
 
 	return p2pCmd
 }
@@ -284,8 +296,14 @@ func createServiceCommand() *cobra.Command {
 	}
 	installCmd.Flags().StringVarP(&configFile, "config", "c", "", "Configuration file path")
 	installCmd.Flags().StringVarP(&token, "token", "t", "", "JWT token for authentication")
-	installCmd.MarkFlagRequired("config")
-	installCmd.MarkFlagRequired("token")
+	if err := installCmd.MarkFlagRequired("config"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
+		os.Exit(1)
+	}
+	if err := installCmd.MarkFlagRequired("token"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Uninstall service command
 	uninstallCmd := &cobra.Command{
