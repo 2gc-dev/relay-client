@@ -44,9 +44,25 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Debug go.mod before tidy
+        run: |
+          echo "=== go.mod before tidy ==="
+          cat go.mod
+          echo "=== go.sum before tidy ==="
+          head -20 go.sum
+          echo "=== Checking cobra usage ==="
+          grep -r "cobra" cmd/ || echo "No cobra found in cmd/"
+          echo "=== Go version ==="
+          go version
+          echo "=== Go env ==="
+          go env GOMOD GOWORK
+
       - name: Verify go.mod tidy
         run: |
           go mod tidy
+          echo "=== go.mod after tidy ==="
+          cat go.mod
+          echo "=== Checking for changes ==="
           git diff --exit-code -- go.mod go.sum
 
       - name: go vet
