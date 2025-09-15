@@ -236,12 +236,10 @@ func installMacOS(binaryPath string) error {
 
 // Вспомогательные функции для удаления службы
 func uninstallLinux() error {
-	if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
-		// Log error but continue
+	if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil { // Log error but continue
 		fmt.Printf("Warning: failed to stop service: %v\n", err)
 	}
-	if err := exec.Command("systemctl", "disable", serviceName).Run(); err != nil {
-		// Log error but continue
+	if err := exec.Command("systemctl", "disable", serviceName).Run(); err != nil { // Log error but continue
 		fmt.Printf("Warning: failed to disable service: %v\n", err)
 	}
 	if err := os.Remove("/etc/systemd/system/" + serviceName + ".service"); err != nil {
@@ -254,8 +252,7 @@ func uninstallLinux() error {
 }
 
 func uninstallWindows() error {
-	if err := exec.Command("nssm", "stop", serviceName).Run(); err != nil {
-		// Log error but continue
+	if err := exec.Command("nssm", "stop", serviceName).Run(); err != nil { // Log error but continue
 		fmt.Printf("Warning: failed to stop service: %v\n", err)
 	}
 	return exec.Command("nssm", "remove", serviceName, "confirm").Run()

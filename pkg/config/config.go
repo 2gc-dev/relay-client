@@ -57,7 +57,7 @@ func LoadConfig(configPath string) (*types.Config, error) {
 
 // setDefaults sets default configuration values
 func setDefaults() {
-	viper.SetDefault("relay.host", "relay.2gc.ru")
+	viper.SetDefault("relay.host", "edge.2gc.ru")
 	viper.SetDefault("relay.port", 9090)
 	viper.SetDefault("relay.timeout", "30s")
 	viper.SetDefault("relay.tls.enabled", true)

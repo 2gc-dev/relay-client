@@ -3,7 +3,7 @@
 
 # Relay Configuration
 relay:
-  host: "relay.2gc.ru"  # Реальный relay сервер
+  host: "edge.2gc.ru"  # Реальный relay сервер
   port: 9090
   timeout: "30s"
   tls:
@@ -13,7 +13,7 @@ relay:
     ca_cert: ""
     client_cert: ""
     client_key: ""
-    server_name: "relay.2gc.ru"
+    server_name: "edge.2gc.ru"
 
 # Authentication Configuration
 auth:
