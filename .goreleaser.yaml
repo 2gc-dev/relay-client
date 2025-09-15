@@ -39,7 +39,7 @@ checksum:
 
 sboms:
   - artifacts: archive
-    formats: [cyclonedx]
+    format: cyclonedx-json
 
 changelog:
   use: github
