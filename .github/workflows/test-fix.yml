@@ -1,0 +1,55 @@
+name: Test Fix
+
+on:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.25'
+
+jobs:
+  test-go-mod-tidy:
+    name: Test go mod tidy fix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify go.mod tidy
+        run: |
+          echo "Running go mod tidy..."
+          go mod tidy
+          echo "Checking for changes..."
+          git diff --exit-code -- go.mod go.sum
+          echo "✅ go.mod tidy completed successfully - no changes detected"
+
+      - name: Build application
+        run: |
+          echo "Building application..."
+          go build ./cmd/cloudbridge-client
+          echo "✅ Build completed successfully"
+
+      - name: Run tests
+        run: |
+          echo "Running tests..."
+          go test ./...
+          echo "✅ Tests completed successfully"
