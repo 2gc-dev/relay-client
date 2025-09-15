@@ -68,8 +68,10 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: Debug golangci-lint
+      - name: Install golangci-lint
         run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           echo "=== golangci-lint version ==="
           golangci-lint version
           echo "=== golangci-lint config ==="
@@ -77,11 +79,10 @@ jobs:
           echo "=== Running golangci-lint locally ==="
           golangci-lint run --verbose || echo "golangci-lint failed locally"
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.64.8
-          args: --verbose --timeout=10m
+      - name: Run golangci-lint
+        run: |
+          echo "=== Running golangci-lint in CI ==="
+          golangci-lint run --verbose --timeout=10m
 
       - name: Tests (race + coverage)
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
