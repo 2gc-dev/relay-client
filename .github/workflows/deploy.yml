@@ -30,7 +30,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ env.GO_VERSION }}
 
@@ -47,62 +47,67 @@ jobs:
         cp config-${{ github.event.inputs.environment }}.yaml deployment/config.yaml
         cp env.example deployment/
         
-        # Create deployment script
         cat > deployment/deploy.sh << 'EOF'
         #!/bin/bash
-        set -e
-        
+        set -euo pipefail
+
         echo "🚀 Deploying CloudBridge Client..."
-        
-        # Check if secrets are set
-        if [ -z "$JWT_SECRET" ]; then
-          echo "❌ JWT_SECRET environment variable is not set"
-          exit 1
+
+        # Проверка секретов
+        : "${JWT_SECRET:?JWT_SECRET not set}"
+        : "${FALLBACK_SECRET:?FALLBACK_SECRET not set}"
+
+        sudo mkdir -p /opt/cloudbridge
+        sudo cp cloudbridge-client /usr/local/bin/
+        sudo chmod +x /usr/local/bin/cloudbridge-client
+
+        # Создать пользователя/группу, если их нет
+        if ! id -u cloudbridge >/dev/null 2>&1; then
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin cloudbridge
         fi
-        
-        if [ -z "$FALLBACK_SECRET" ]; then
-          echo "❌ FALLBACK_SECRET environment variable is not set"
-          exit 1
-        fi
-        
-        echo "✅ Environment variables are set"
-        
-        # Create systemd service (Linux)
-        if command -v systemctl >/dev/null 2>&1; then
-          sudo cp cloudbridge-client /usr/local/bin/
-          sudo chmod +x /usr/local/bin/cloudbridge-client
-          
-          # Create systemd service file
-          sudo tee /etc/systemd/system/cloudbridge-client.service > /dev/null << 'SERVICE_EOF'
+        sudo chown -R cloudbridge:cloudbridge /opt/cloudbridge
+
+        # Env-файл для systemd
+        sudo mkdir -p /etc/cloudbridge
+        sudo tee /etc/cloudbridge/cloudbridge.env >/dev/null << ENVEOF
+        JWT_SECRET=${JWT_SECRET}
+        FALLBACK_SECRET=${FALLBACK_SECRET}
+        ENVEOF
+        sudo chmod 600 /etc/cloudbridge/cloudbridge.env
+
+        # Unit-файл
+        sudo tee /etc/systemd/system/cloudbridge-client.service > /dev/null << 'SERVICE_EOF'
         [Unit]
         Description=CloudBridge Client
         After=network.target
-        
+
         [Service]
         Type=simple
         User=cloudbridge
         Group=cloudbridge
         WorkingDirectory=/opt/cloudbridge
-        ExecStart=/usr/local/bin/cloudbridge-client
+        ExecStart=/usr/local/bin/cloudbridge-client --config /opt/cloudbridge/config.yaml
         Restart=always
         RestartSec=5
-        Environment=JWT_SECRET=${JWT_SECRET}
-        Environment=FALLBACK_SECRET=${FALLBACK_SECRET}
-        
+        EnvironmentFile=/etc/cloudbridge/cloudbridge.env
+
         [Install]
         WantedBy=multi-user.target
         SERVICE_EOF
-        
-          sudo systemctl daemon-reload
-          sudo systemctl enable cloudbridge-client
-          sudo systemctl restart cloudbridge-client
-          
-          echo "✅ Service deployed and started"
+
+        # Конфиг приложения (если нужен в /opt/cloudbridge)
+        if [ -f config.yaml ]; then
+          sudo cp config.yaml /opt/cloudbridge/config.yaml
+          sudo chown cloudbridge:cloudbridge /opt/cloudbridge/config.yaml
         fi
-        
-        echo "🎉 Deployment completed successfully!"
+
+        sudo systemctl daemon-reload
+        sudo systemctl enable cloudbridge-client
+        sudo systemctl restart cloudbridge-client
+
+        echo "✅ Service deployed and started"
         EOF
-        
+
         chmod +x deployment/deploy.sh
 
     - name: Deploy to staging
