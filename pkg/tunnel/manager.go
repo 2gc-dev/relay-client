@@ -3,6 +3,7 @@ package tunnel
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -321,7 +322,7 @@ func (m *Manager) handleTunnelConnection(tunnel *Tunnel, localConn net.Conn) {
 	defer tunnel.Stats.DecrementConnections()
 
 	// Connect to remote host
-	remoteConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", tunnel.RemoteHost, tunnel.RemotePort))
+	remoteConn, err := net.Dial("tcp", net.JoinHostPort(tunnel.RemoteHost, strconv.Itoa(tunnel.RemotePort)))
 	if err != nil {
 		fmt.Printf("Failed to connect to remote host for tunnel %s: %v\n", tunnel.ID, err)
 		return

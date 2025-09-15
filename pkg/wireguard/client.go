@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 )
 
@@ -57,7 +58,8 @@ func (c *WireGuardClient) Connect() error {
 	fmt.Println("🔌 Подключение к WireGuard P2P relay серверу...")
 
 	// Подключение к relay серверу
-	conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", c.config.RelayServer, c.config.RelayPort), 10*time.Second)
+	address := net.JoinHostPort(c.config.RelayServer, strconv.Itoa(c.config.RelayPort))
+	conn, err := net.DialTimeout("udp", address, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("ошибка подключения к relay серверу: %v", err)
 	}

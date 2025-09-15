@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/2gc-dev/cloudbridge-client/pkg/auth"
@@ -148,10 +149,11 @@ func (c *Client) Connect() error {
 
 	// Establish connection
 	var conn net.Conn
+	address := net.JoinHostPort(c.config.Relay.Host, strconv.Itoa(c.config.Relay.Port))
 	if tlsConfig != nil {
-		conn, err = tls.Dial("tcp", fmt.Sprintf("%s:%d", c.config.Relay.Host, c.config.Relay.Port), tlsConfig)
+		conn, err = tls.Dial("tcp", address, tlsConfig)
 	} else {
-		conn, err = net.Dial("tcp", fmt.Sprintf("%s:%d", c.config.Relay.Host, c.config.Relay.Port))
+		conn, err = net.Dial("tcp", address)
 	}
 
 	if err != nil {
