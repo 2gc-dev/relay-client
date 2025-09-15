@@ -3,7 +3,7 @@ module github.com/2gc-dev/cloudbridge-client
 go 1.25
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.0.0
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/prometheus/client_golang v1.17.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.16.0
