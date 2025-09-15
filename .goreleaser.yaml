@@ -24,7 +24,8 @@ builds:
 archives:
   - id: archive
     builds: [cloudbridge-client]
-    name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}-v{{ .Arm }}{{ end }}'
+    name_template: '{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}'
+    format: tar.gz
     format_overrides:
       - goos: windows
         format: zip
@@ -37,8 +38,8 @@ checksum:
   name_template: 'checksums.txt'
 
 sboms:
-  - artifacts: archive
-    formats: [cyclonedx, spdx]
+  - artifacts: [archive]
+    format: cyclonedx-json
 
 changelog:
   use: github
