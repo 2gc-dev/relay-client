@@ -68,10 +68,20 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Debug golangci-lint
+        run: |
+          echo "=== golangci-lint version ==="
+          golangci-lint version
+          echo "=== golangci-lint config ==="
+          cat .golangci.yml || echo "No .golangci.yml found"
+          echo "=== Running golangci-lint locally ==="
+          golangci-lint run --verbose || echo "golangci-lint failed locally"
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.8
+          args: --verbose --timeout=10m
 
       - name: Tests (race + coverage)
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...

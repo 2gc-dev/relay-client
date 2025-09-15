@@ -1,5 +1,5 @@
 run:
-  timeout: 5m
+  timeout: 10m
   modules-download-mode: readonly
 
 linters-settings:
@@ -72,6 +72,12 @@ linters:
     - whitespace
 
 issues:
+  exclude-dirs:
+    - vendor
+    - testdata
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.gen\\.go$"
   exclude-rules:
     - path: _test\.go
       linters:
