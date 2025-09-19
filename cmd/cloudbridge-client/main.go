@@ -11,12 +11,28 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/2gc-dev/cloudbridge-client/pkg/api"
+	"github.com/2gc-dev/cloudbridge-client/pkg/auth"
 	"github.com/2gc-dev/cloudbridge-client/pkg/config"
 	"github.com/2gc-dev/cloudbridge-client/pkg/errors"
+	"github.com/2gc-dev/cloudbridge-client/pkg/p2p"
 	"github.com/2gc-dev/cloudbridge-client/pkg/relay"
 	"github.com/2gc-dev/cloudbridge-client/pkg/service"
 	"github.com/2gc-dev/cloudbridge-client/pkg/types"
 	"github.com/spf13/cobra" // Required for CLI interface
+)
+
+// Build-time variables (set via ldflags)
+var (
+	version              string = "dev"
+	buildType            string = "unknown"
+	buildOS              string = "unknown"
+	buildArch            string = "unknown"
+	buildTime            string = "unknown"
+	jwtSecret            string = ""
+	jwtFallbackSecret    string = ""
+	buildApiBase         string = ""
+	buildTenantID        string = ""
 )
 
 var (
@@ -31,10 +47,10 @@ var (
 	// P2P Mesh specific flags
 	p2pMode    bool
 	peerID     string
-	endpoint   string
-	publicKey  string
-	privateKey string
-	meshPort   int
+
+	// HTTP API specific flags
+	insecureSkipTLSVerify bool
+	logLevel             string
 )
 
 func main() {
@@ -44,14 +60,23 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "cloudbridge-client",
 		Short: "CloudBridge Relay Client",
-		Long:  "A cross-platform client for CloudBridge Relay with TLS 1.3 support, JWT authentication, and P2P mesh networking",
+		Long:  "A cross-platform client for CloudBridge Relay with TLS 1.3 support, JWT authentication, and QUIC + ICE/STUN/TURN P2P mesh networking",
 		RunE:  run,
 	}
 
-	// Add basic flags
-	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Configuration file path")
-	rootCmd.Flags().StringVarP(&token, "token", "t", "", "JWT token for authentication")
-	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
+	// Add version command
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Show version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			showVersion()
+		},
+	})
+
+	// Add basic flags as persistent flags so they're available to subcommands
+	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Configuration file path")
+	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "JWT token for authentication")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
 
 	// Tunnel mode flags
 	rootCmd.Flags().StringVarP(&tunnelID, "tunnel-id", "i", "tunnel_001", "Tunnel ID")
@@ -62,16 +87,13 @@ func main() {
 	// P2P Mesh mode flags
 	rootCmd.Flags().BoolVar(&p2pMode, "p2p", false, "Enable P2P mesh mode")
 	rootCmd.Flags().StringVar(&peerID, "peer-id", "", "Peer ID for P2P mesh")
-	rootCmd.Flags().StringVar(&endpoint, "endpoint", "", "WireGuard endpoint (IP:PORT)")
-	rootCmd.Flags().StringVar(&publicKey, "public-key", "", "WireGuard public key")
-	rootCmd.Flags().StringVar(&privateKey, "private-key", "", "WireGuard private key")
-	rootCmd.Flags().IntVar(&meshPort, "mesh-port", 51820, "WireGuard mesh port")
+
+	// HTTP API flags (URLs are hardcoded in the code)
+	rootCmd.PersistentFlags().BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification (dev only)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 
 	// Mark required flags
-	if err := rootCmd.MarkFlagRequired("token"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
-		os.Exit(1)
-	}
+	rootCmd.MarkFlagRequired("token")
 
 	// Add subcommands
 	rootCmd.AddCommand(createP2PCommand())
@@ -97,6 +119,13 @@ func run(cmd *cobra.Command, args []string) error {
 	// Override config with command line flags if provided
 	if token != "" {
 		cfg.Auth.Secret = token // For JWT auth, secret is the token
+	}
+	// API URLs are hardcoded in the code
+	if insecureSkipTLSVerify {
+		cfg.API.InsecureSkipVerify = insecureSkipTLSVerify
+	}
+	if logLevel != "" {
+		cfg.Logging.Level = logLevel
 	}
 
 	// Create client
@@ -238,34 +267,12 @@ func createP2PCommand() *cobra.Command {
 	p2pCmd := &cobra.Command{
 		Use:   "p2p",
 		Short: "Start P2P mesh networking",
-		Long:  "Connect to P2P mesh network using WireGuard",
+		Long:  "Connect to P2P mesh network using QUIC + ICE/STUN/TURN",
 		RunE:  runP2P,
 	}
 
 	// P2P specific flags
-	p2pCmd.Flags().StringVar(&peerID, "peer-id", "", "Peer ID for P2P mesh (required)")
-	p2pCmd.Flags().StringVar(&endpoint, "endpoint", "", "WireGuard endpoint (IP:PORT) (required)")
-	p2pCmd.Flags().StringVar(&publicKey, "public-key", "", "WireGuard public key (required)")
-	p2pCmd.Flags().StringVar(&privateKey, "private-key", "", "WireGuard private key (required)")
-	p2pCmd.Flags().IntVar(&meshPort, "mesh-port", 51820, "WireGuard mesh port")
-
-	// Mark required flags
-	if err := p2pCmd.MarkFlagRequired("peer-id"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
-		os.Exit(1)
-	}
-	if err := p2pCmd.MarkFlagRequired("endpoint"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
-		os.Exit(1)
-	}
-	if err := p2pCmd.MarkFlagRequired("public-key"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
-		os.Exit(1)
-	}
-	if err := p2pCmd.MarkFlagRequired("private-key"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking flag required: %v\n", err)
-		os.Exit(1)
-	}
+	p2pCmd.Flags().StringVar(&peerID, "peer-id", "", "Peer ID for P2P mesh (optional, auto-generated if not provided)")
 
 	return p2pCmd
 }
@@ -489,13 +496,78 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, input, 0644) //nolint:gosec // Config files need readable permissions
 }
 
+// p2pLogger implements the p2p.Logger interface
+type p2pLogger struct{}
+
+func (pl *p2pLogger) Info(msg string, fields ...interface{}) {
+	if len(fields) > 0 {
+		log.Printf("[P2P] INFO: %s %v", msg, fields)
+	} else {
+		log.Printf("[P2P] INFO: %s", msg)
+	}
+}
+
+func (pl *p2pLogger) Error(msg string, fields ...interface{}) {
+	if len(fields) > 0 {
+		log.Printf("[P2P] ERROR: %s %v", msg, fields)
+	} else {
+		log.Printf("[P2P] ERROR: %s", msg)
+	}
+}
+
+func (pl *p2pLogger) Debug(msg string, fields ...interface{}) {
+	if len(fields) > 0 {
+		log.Printf("[P2P] DEBUG: %s %v", msg, fields)
+	} else {
+		log.Printf("[P2P] DEBUG: %s", msg)
+	}
+}
+
+func (pl *p2pLogger) Warn(msg string, fields ...interface{}) {
+	if len(fields) > 0 {
+		log.Printf("[P2P] WARN: %s %v", msg, fields)
+	} else {
+		log.Printf("[P2P] WARN: %s", msg)
+	}
+}
+
+// showVersion displays version information
+func showVersion() {
+	fmt.Printf("CloudBridge Client\n")
+	fmt.Printf("==================\n")
+	fmt.Printf("Version:     %s\n", version)
+	fmt.Printf("Build Type:  %s\n", buildType)
+	fmt.Printf("Build OS:    %s\n", buildOS)
+	fmt.Printf("Build Arch:  %s\n", buildArch)
+	fmt.Printf("Build Time:  %s\n", buildTime)
+	fmt.Printf("Go Version:  %s\n", runtime.Version())
+	fmt.Printf("Go OS/Arch:  %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	
+	if buildType != "production" {
+		fmt.Printf("\nBuild Configuration:\n")
+		if jwtSecret != "" {
+			fmt.Printf("JWT Secret:     %s...\n", jwtSecret[:min(8, len(jwtSecret))])
+		}
+		if buildApiBase != "" {
+			fmt.Printf("API Base:       %s\n", buildApiBase)
+		}
+		if buildTenantID != "" {
+			fmt.Printf("Tenant ID:      %s\n", buildTenantID)
+		}
+	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // runP2P runs the P2P mesh mode
 func runP2P(cmd *cobra.Command, args []string) error {
-	log.Printf("Starting P2P mesh mode...")
-	log.Printf("Peer ID: %s", peerID)
-	log.Printf("Endpoint: %s", endpoint)
-	log.Printf("Public Key: %s", publicKey)
-	log.Printf("Mesh Port: %d", meshPort)
+	log.Printf("Starting P2P mesh mode with QUIC + ICE/STUN/TURN...")
 
 	// Load configuration
 	cfg, err := config.LoadConfig(configFile)
@@ -503,16 +575,22 @@ func runP2P(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Create client
-	client, err := relay.NewClient(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+	// Override config with command line flags if provided
+	// API URLs are hardcoded in the code
+	if insecureSkipTLSVerify {
+		cfg.API.InsecureSkipVerify = insecureSkipTLSVerify
 	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			log.Printf("Failed to close client: %v", err)
-		}
-	}()
+	if logLevel != "" {
+		cfg.Logging.Level = logLevel
+	}
+
+	// Generate peer ID if not provided
+	if peerID == "" {
+		hostname, _ := os.Hostname()
+		peerID = fmt.Sprintf("peer-%s", hostname)
+	}
+
+	log.Printf("Peer ID: %s", peerID)
 
 	// Set up signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -525,30 +603,78 @@ func runP2P(cmd *cobra.Command, args []string) error {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	}
 
-	// Connect to relay server
-	if err := connectWithRetry(client); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+	// Create authentication manager for JWT validation
+	authManager, err := auth.NewAuthManager(&auth.AuthConfig{
+		Type:           cfg.Auth.Type,
+		Secret:         cfg.Auth.Secret,
+		FallbackSecret: cfg.Auth.FallbackSecret,
+		SkipValidation: cfg.Auth.SkipValidation,
+		Keycloak: &auth.KeycloakConfig{
+			ServerURL: cfg.Auth.Keycloak.ServerURL,
+			Realm:     cfg.Auth.Keycloak.Realm,
+			ClientID:  cfg.Auth.Keycloak.ClientID,
+			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create auth manager: %w", err)
 	}
 
-	log.Printf("Successfully connected to relay server %s:%d", cfg.Relay.Host, cfg.Relay.Port)
-
-	// Authenticate
-	if err := authenticateWithRetry(client, token); err != nil {
-		return fmt.Errorf("failed to authenticate: %w", err)
+	// Validate JWT token
+	validatedToken, err := authManager.ValidateToken(token)
+	if err != nil {
+		return fmt.Errorf("failed to validate token: %w", err)
 	}
 
-	log.Printf("Successfully authenticated with client ID: %s", client.GetClientID())
-
-	// Get P2P manager
-	p2pManager := client.GetP2PManager()
-	if p2pManager == nil {
-		return fmt.Errorf("P2P manager not available")
+	// Extract P2P configuration from JWT token
+	p2pConfig, err := p2p.ExtractP2PConfigFromToken(authManager, validatedToken)
+	if err != nil {
+		return fmt.Errorf("failed to extract P2P config from token: %w", err)
 	}
 
-	// Start P2P mesh
-	if err := p2pManager.Start(); err != nil {
-		return fmt.Errorf("failed to start P2P mesh: %w", err)
+	// Create API manager configuration
+	apiConfig := &api.ManagerConfig{
+		BaseURL:            cfg.API.BaseURL,
+		HeartbeatURL:       cfg.API.HeartbeatURL,
+		InsecureSkipVerify: cfg.API.InsecureSkipVerify,
+		Timeout:            cfg.API.Timeout,
+		MaxRetries:         cfg.API.MaxRetries,
+		BackoffMultiplier:  cfg.API.BackoffMultiplier,
+		MaxBackoff:         cfg.API.MaxBackoff,
+		Token:              token,
+		TenantID:           p2pConfig.TenantID,
+		HeartbeatInterval:  cfg.P2P.HeartbeatInterval,
 	}
+
+	// Create P2P logger
+	p2pLogger := &p2pLogger{}
+
+	// Create P2P manager with HTTP API support
+	p2pManager := p2p.NewManagerWithAPI(p2pConfig, apiConfig, authManager, token, p2pLogger)
+
+    // Start P2P mesh with retry to survive temporary relay outages
+    {
+        backoff := 1 * time.Second
+        maxBackoff := 30 * time.Second
+        for {
+            if err := p2pManager.Start(); err != nil {
+                log.Printf("Failed to start P2P mesh: %v, retrying in %v...", err, backoff)
+                time.Sleep(backoff)
+                backoff *= 2
+                if backoff > maxBackoff {
+                    backoff = maxBackoff
+                }
+                continue
+            }
+            break
+        }
+    }
+
+	defer func() {
+		if err := p2pManager.Stop(); err != nil {
+			log.Printf("Failed to stop P2P manager: %v", err)
+		}
+	}()
 
 	log.Printf("P2P mesh started successfully")
 

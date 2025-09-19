@@ -43,6 +43,7 @@ func LoadConfig(configPath string) (*types.Config, error) {
 	if err := viper.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
+	
 
 	// Substitute environment variables in string fields
 	substituteEnvVars(&config)
@@ -57,22 +58,70 @@ func LoadConfig(configPath string) (*types.Config, error) {
 
 // setDefaults sets default configuration values
 func setDefaults() {
-	viper.SetDefault("relay.host", "edge.2gc.ru")
-	viper.SetDefault("relay.port", 9090)
+	// Relay configuration
+	viper.SetDefault("relay.host", "b1.2gc.space") // Новый домен через CDN
+    viper.SetDefault("relay.port", 9091)
+    viper.SetDefault("relay.ports.http_api", 8083)
+    viper.SetDefault("relay.ports.p2p_api", 8083)
+    viper.SetDefault("relay.ports.quic", 9091)
+	viper.SetDefault("relay.ports.stun", 19302)
+	viper.SetDefault("relay.ports.masque", 8443)
+	viper.SetDefault("relay.ports.enhanced_quic", 9092)
 	viper.SetDefault("relay.timeout", "30s")
 	viper.SetDefault("relay.tls.enabled", true)
 	viper.SetDefault("relay.tls.min_version", "1.3")
 	viper.SetDefault("relay.tls.verify_cert", true)
+	viper.SetDefault("relay.tls.server_name", "b1.2gc.space") // Новый домен через CDN
+	
+	// Authentication
 	viper.SetDefault("auth.type", "jwt")
 	viper.SetDefault("auth.fallback_secret", "")
+	viper.SetDefault("auth.skip_validation", false)
 	viper.SetDefault("auth.keycloak.enabled", false)
+	
+	// Rate limiting
 	viper.SetDefault("rate_limiting.enabled", true)
 	viper.SetDefault("rate_limiting.max_retries", 3)
 	viper.SetDefault("rate_limiting.backoff_multiplier", 2.0)
 	viper.SetDefault("rate_limiting.max_backoff", "30s")
+	
+	// Logging
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("logging.format", "json")
 	viper.SetDefault("logging.output", "stdout")
+	
+	// API configuration - hardcoded URLs (development HTTP)
+    viper.SetDefault("api.base_url", "http://edge.2gc.ru:8083")
+    viper.SetDefault("api.p2p_api_url", "http://edge.2gc.ru:8083")
+    viper.SetDefault("api.heartbeat_url", "http://edge.2gc.ru:8083")
+	viper.SetDefault("api.insecure_skip_verify", false)
+	viper.SetDefault("api.timeout", "30s")
+	viper.SetDefault("api.max_retries", 3)
+	viper.SetDefault("api.backoff_multiplier", 2.0)
+	viper.SetDefault("api.max_backoff", "60s")
+	
+	// ICE configuration
+	viper.SetDefault("ice.stun_servers", []string{"edge.2gc.ru:19302"})
+	viper.SetDefault("ice.turn_servers", []string{})
+	viper.SetDefault("ice.timeout", "30s")
+	viper.SetDefault("ice.max_binding_requests", 7)
+	
+	// QUIC configuration
+	viper.SetDefault("quic.handshake_timeout", "10s")
+	viper.SetDefault("quic.idle_timeout", "30s")
+	viper.SetDefault("quic.max_streams", 100)
+	viper.SetDefault("quic.max_stream_data", 1048576) // 1MB
+	viper.SetDefault("quic.keep_alive_period", "15s")
+	viper.SetDefault("quic.insecure_skip_verify", false)
+	
+	// P2P configuration
+	viper.SetDefault("p2p.max_connections", 1000)
+	viper.SetDefault("p2p.session_timeout", "300s")
+	viper.SetDefault("p2p.peer_discovery_interval", "30s")
+	viper.SetDefault("p2p.connection_retry_interval", "5s")
+	viper.SetDefault("p2p.max_retry_attempts", 3)
+	viper.SetDefault("p2p.heartbeat_interval", "30s")
+	viper.SetDefault("p2p.heartbeat_timeout", "10s")
 }
 
 // validateConfig validates the configuration

@@ -1,5 +1,7 @@
 package p2p
 
+import "time"
+
 // ConnectionType represents the type of P2P connection
 type ConnectionType string
 
@@ -9,22 +11,24 @@ const (
 	ConnectionTypeP2PMesh      ConnectionType = "p2p-mesh"
 )
 
-// WireGuardConfig represents WireGuard configuration from JWT
-type WireGuardConfig struct {
-	PrivateKey string   `json:"private_key"`
-	PublicKey  string   `json:"public_key"`
-	AllowedIPs []string `json:"allowed_ips"`
-	Endpoint   string   `json:"endpoint,omitempty"`
-	ListenPort int      `json:"listen_port,omitempty"`
-	MTU        int      `json:"mtu,omitempty"`
+// QUICConfig represents QUIC configuration
+type QUICConfig struct {
+	ListenPort        int    `json:"listen_port,omitempty"`
+	HandshakeTimeout  string `json:"handshake_timeout,omitempty"`
+	IdleTimeout       string `json:"idle_timeout,omitempty"`
+	MaxStreams        int    `json:"max_streams,omitempty"`
+	MaxStreamData     int    `json:"max_stream_data,omitempty"`
+	KeepAlivePeriod   string `json:"keep_alive_period,omitempty"`
+	InsecureSkipVerify bool  `json:"insecure_skip_verify,omitempty"`
 }
 
 // MeshConfig represents mesh network configuration from JWT
 type MeshConfig struct {
-	AutoDiscovery bool   `json:"auto_discovery"`
-	Persistent    bool   `json:"persistent"`
-	Routing       string `json:"routing"`    // "hybrid", "direct", "relay"
-	Encryption    string `json:"encryption"` // "wireguard", "tls"
+	AutoDiscovery    bool        `json:"auto_discovery"`
+	Persistent       bool        `json:"persistent"`
+	Routing          string      `json:"routing"`    // "hybrid", "direct", "relay"
+	Encryption       string      `json:"encryption"` // "quic", "tls"
+	HeartbeatInterval interface{} `json:"heartbeat_interval"`
 }
 
 // PeerWhitelist represents peer whitelist configuration from JWT
@@ -36,20 +40,26 @@ type PeerWhitelist struct {
 
 // NetworkConfig represents network configuration from JWT
 type NetworkConfig struct {
-	Subnet string   `json:"subnet"`
-	DNS    []string `json:"dns"`
-	MTU    int      `json:"mtu"`
+	Subnet      string   `json:"subnet"`
+	DNS         []string `json:"dns"`
+	MTU         int      `json:"mtu"`
+	STUNServers []string `json:"stun_servers,omitempty"`
+	TURNServers []string `json:"turn_servers,omitempty"`
+	QUICPort    int      `json:"quic_port,omitempty"`
+	ICEPort     int      `json:"ice_port,omitempty"`
 }
 
 // P2PConfig represents complete P2P configuration
 type P2PConfig struct {
-	ConnectionType  ConnectionType   `json:"connection_type"`
-	WireGuardConfig *WireGuardConfig `json:"wireguard_config,omitempty"`
-	MeshConfig      *MeshConfig      `json:"mesh_config,omitempty"`
-	PeerWhitelist   *PeerWhitelist   `json:"peer_whitelist,omitempty"`
-	NetworkConfig   *NetworkConfig   `json:"network_config,omitempty"`
-	TenantID        string           `json:"tenant_id,omitempty"`
-	Permissions     []string         `json:"permissions,omitempty"`
+	ConnectionType    ConnectionType   `json:"connection_type"`
+	QUICConfig        *QUICConfig      `json:"quic_config,omitempty"`
+	MeshConfig        *MeshConfig      `json:"mesh_config,omitempty"`
+	PeerWhitelist     *PeerWhitelist   `json:"peer_whitelist,omitempty"`
+	NetworkConfig     *NetworkConfig   `json:"network_config,omitempty"`
+	TenantID          string           `json:"tenant_id,omitempty"`
+	Permissions       []string         `json:"permissions,omitempty"`
+	HeartbeatInterval time.Duration    `json:"heartbeat_interval,omitempty"`
+	HeartbeatTimeout  time.Duration    `json:"heartbeat_timeout,omitempty"`
 }
 
 // Peer represents a discovered peer in the mesh network
@@ -58,6 +68,8 @@ type Peer struct {
 	PublicKey   string   `json:"public_key"`
 	Endpoint    string   `json:"endpoint"`
 	AllowedIPs  []string `json:"allowed_ips"`
+	QUICPort    int      `json:"quic_port,omitempty"`
+	ICEPort     int      `json:"ice_port,omitempty"`
 	Persistent  bool     `json:"persistent"`
 	LastSeen    int64    `json:"last_seen"`
 	Latency     int64    `json:"latency_ms"`
@@ -74,13 +86,15 @@ type MeshTopology struct {
 
 // P2PStatus represents the current status of P2P connection
 type P2PStatus struct {
-	IsConnected    bool           `json:"is_connected"`
-	ConnectionType ConnectionType `json:"connection_type"`
-	ActivePeers    int            `json:"active_peers"`
-	TotalPeers     int            `json:"total_peers"`
-	MeshEnabled    bool           `json:"mesh_enabled"`
-	WireGuardReady bool           `json:"wireguard_ready"`
-	LastError      string         `json:"last_error,omitempty"`
+	IsConnected      bool           `json:"is_connected"`
+	ConnectionType   ConnectionType `json:"connection_type"`
+	ActivePeers      int            `json:"active_peers"`
+	TotalPeers       int            `json:"total_peers"`
+	MeshEnabled      bool           `json:"mesh_enabled"`
+	QUICReady        bool           `json:"quic_ready"`
+	ICEReady         bool           `json:"ice_ready"`
+	ActiveConnections int           `json:"active_connections"`
+	LastError        string         `json:"last_error,omitempty"`
 }
 
 // P2PMessage represents a P2P protocol message

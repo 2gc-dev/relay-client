@@ -1,199 +1,182 @@
-# ---- Flags & meta ----
-BINARY_NAME := cloudbridge-client
-VERSION     := $(shell cat VERSION 2>/dev/null || git describe --tags --always --dirty)
-GIT_COMMIT  := $(shell git rev-parse --short HEAD)
-BUILD_TIME  := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+# CloudBridge Client Makefile
 
-# Разделяем «ldflags» и «флаги go build», чтобы не дублировать -ldflags
-LDFLAGS_BASE := -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)
-LDFLAGS_SIZE := -s -w
-# Для воспроизводимости: отключаем VCS-метаданные и чистим пути
-BUILD_FLAGS  := -trimpath -buildvcs=false
+# Default values
+VERSION ?= dev
+BUILD_TYPE ?= test
+OUTPUT_DIR ?= dist
 
-# Платформы Go (без arm/v7 в виде «arch»)
-PLATFORMS := linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64
+# Build targets
+.PHONY: all build test clean help version
 
-# ARMv7 выносим отдельно (GOARM=7)
-ARMV7_PLATFORMS := linux/arm
+# Default target
+all: build
 
-RUSSIAN_PLATFORMS := astra/amd64 alt/amd64 rosa/amd64 redos/amd64 vos/amd64
-ENTERPRISE_PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
+# Help target
+help:
+	@echo "CloudBridge Client Build System"
+	@echo "==============================="
+	@echo ""
+	@echo "Available targets:"
+	@echo "  build          - Build for current platform"
+	@echo "  build-all      - Build for all platforms"
+	@echo "  build-test     - Build test version for current platform"
+	@echo "  build-demo     - Build demo version for current platform"
+	@echo "  build-prod     - Build production version for current platform"
+	@echo "  test           - Run tests"
+	@echo "  clean          - Clean build artifacts"
+	@echo "  version        - Show version information"
+	@echo ""
+	@echo "Variables:"
+	@echo "  VERSION        - Version to build (default: dev)"
+	@echo "  BUILD_TYPE     - Build type: test, demo, production (default: test)"
+	@echo "  OUTPUT_DIR     - Output directory (default: dist)"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make build-test VERSION=1.0.0"
+	@echo "  make build-prod VERSION=1.0.0"
+	@echo "  make build-all BUILD_TYPE=demo"
 
-BUILD_DIR     := build
-PACKAGE_DIR   := packages
-CONTAINER_DIR := containers
-VM_DIR        := vm-images
-
-.PHONY: all build clean test install build-all build-russian build-enterprise build-packages build-containers build-vm help
-
-all: clean build
-
+# Build for current platform
 build:
-	@echo "Building $(BINARY_NAME)..."
-	@go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o bin/$(BINARY_NAME) ./cmd/cloudbridge-client
+	@echo "Building for current platform..."
+	@./scripts/build-with-config.sh \
+		--os $(shell go env GOOS) \
+		--arch $(shell go env GOARCH) \
+		--type $(BUILD_TYPE) \
+		--version $(VERSION) \
+		--output-dir $(OUTPUT_DIR)
 
-# Multi-platform
+# Build test version
+build-test:
+	@echo "Building test version..."
+	@./scripts/build-with-config.sh \
+		--os $(shell go env GOOS) \
+		--arch $(shell go env GOARCH) \
+		--type test \
+		--version $(VERSION) \
+		--output-dir $(OUTPUT_DIR)
+
+# Build demo version
+build-demo:
+	@echo "Building demo version..."
+	@./scripts/build-with-config.sh \
+		--os $(shell go env GOOS) \
+		--arch $(shell go env GOARCH) \
+		--type demo \
+		--version $(VERSION) \
+		--output-dir $(OUTPUT_DIR)
+
+# Build production version
+build-prod:
+	@echo "Building production version..."
+	@./scripts/build-with-config.sh \
+		--os $(shell go env GOOS) \
+		--arch $(shell go env GOARCH) \
+		--type production \
+		--version $(VERSION) \
+		--output-dir $(OUTPUT_DIR)
+
+# Build for all platforms
 build-all:
 	@echo "Building for all platforms..."
-	@mkdir -p $(BUILD_DIR)
-	@for platform in $(PLATFORMS); do \
-		os=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-$${os}-$${arch}"; \
-		[ "$${os}" = "windows" ] && out="$${out}.exe"; \
-		echo "-> $${os}/$${arch}"; \
-		GOOS=$${os} GOARCH=$${arch} CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
-	@# ARMv7 (GOARM=7)
-	@for platform in $(ARMV7_PLATFORMS); do \
-		os=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-$${os}-armv7"; \
-		echo "-> $${os}/arm (GOARM=7)"; \
-		GOOS=$${os} GOARCH=arm GOARM=7 CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
+	@./scripts/build-with-config.sh --os linux --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+	@./scripts/build-with-config.sh --os linux --arch arm64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+	@./scripts/build-with-config.sh --os windows --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+	@./scripts/build-with-config.sh --os darwin --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+	@./scripts/build-with-config.sh --os darwin --arch arm64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
 
-# Russian distros (linux/amd64, разные репозитории)
-build-russian:
-	@echo "Building for Russian Linux distros (glibc) ..."
-	@mkdir -p $(BUILD_DIR)
-	@for platform in $(RUSSIAN_PLATFORMS); do \
-		distro=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-$${distro}-$${arch}"; \
-		echo "-> $$distro/$$arch (GOOS=linux)"; \
-		GOOS=linux GOARCH=$${arch} CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
+# Build specific platform
+build-linux:
+	@echo "Building for Linux..."
+	@./scripts/build-with-config.sh --os linux --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
 
-# Enterprise (минимальный размер + мета)
-build-enterprise:
-	@echo "Building Enterprise..."
-	@mkdir -p $(BUILD_DIR)
-	@for platform in $(ENTERPRISE_PLATFORMS); do \
-		os=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-enterprise-$${os}-$${arch}"; \
-		[ "$${os}" = "windows" ] && out="$${out}.exe"; \
-		echo "-> enterprise $${os}/$${arch}"; \
-		GOOS=$${os} GOARCH=$${arch} CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE) $(LDFLAGS_SIZE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
+build-windows:
+	@echo "Building for Windows..."
+	@./scripts/build-with-config.sh --os windows --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
 
-build-packages: build-all
-	@echo "Creating packages..."
-	@mkdir -p $(PACKAGE_DIR)
-	@./scripts/build-packages.sh
+build-darwin:
+	@echo "Building for macOS..."
+	@./scripts/build-with-config.sh --os darwin --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
 
-build-containers:
-	@echo "Building containers..."
-	@mkdir -p $(CONTAINER_DIR)
-	@./scripts/build-containers.sh
+build-darwin-arm:
+	@echo "Building for macOS ARM64..."
+	@./scripts/build-with-config.sh --os darwin --arch arm64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
 
-build-vm:
-	@echo "Building VM images..."
-	@mkdir -p $(VM_DIR)
-	@./scripts/build-vm-images.sh
-
-build-universal: build-all build-russian build-enterprise
-	@echo "Building for all platforms..."
-ifeq ($(SKIP_PACKAGES),1)
-	@echo "Skipping packaging (SKIP_PACKAGES=1)"
-else
-	$(MAKE) build-packages
-	$(MAKE) build-containers
-	$(MAKE) build-vm
-endif
-
-clean:
-	@echo "Cleaning..."
-	@rm -rf bin/ $(BUILD_DIR)/ $(PACKAGE_DIR)/ $(CONTAINER_DIR)/ $(VM_DIR)/ coverage.out coverage.html
-
+# Run tests
 test:
 	@echo "Running tests..."
-	@go test -v ./...
+	go test -v ./...
 
-test-race:
-	@echo "Running tests (race)..."
-	@go test -race -v ./...
-
+# Run tests with coverage
 test-coverage:
-	@echo "Running tests (coverage)..."
-	@go test -coverprofile=coverage.out ./...
-	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Running tests with coverage..."
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
 
-install: build
-	@echo "Installing (Linux systemd only)..."
-	@which systemctl >/dev/null 2>&1 && { \
-		sudo cp bin/$(BINARY_NAME) /usr/local/bin/; \
-		sudo mkdir -p /etc/cloudbridge-client; \
-		sudo cp config/config.yaml /etc/cloudbridge-client/; \
-		sudo cp deploy/cloudbridge-client.service /etc/systemd/system/; \
-		sudo systemctl daemon-reload; \
-		sudo systemctl enable cloudbridge-client; \
-		sudo systemctl start cloudbridge-client; \
-	} || { echo "Skip: systemd not found"; }
-
-uninstall:
-	@echo "Uninstall (Linux systemd only)..."
-	@which systemctl >/dev/null 2>&1 && { \
-		sudo systemctl stop cloudbridge-client || true; \
-		sudo systemctl disable cloudbridge-client || true; \
-		sudo rm -f /usr/local/bin/$(BINARY_NAME); \
-		sudo rm -f /etc/systemd/system/cloudbridge-client.service; \
-		sudo systemctl daemon-reload; \
-	} || { echo "Skip: systemd not found"; }
-
-deps:
-	@echo "Downloading modules..."
-	@go mod download
-	@go mod tidy
-
+# Lint code
 lint:
-	@echo "Running golangci-lint..."
-	@golangci-lint run
+	@echo "Running linter..."
+	golangci-lint run
 
+# Format code
 fmt:
-	@echo "Formatting..."
-	@go fmt ./...
+	@echo "Formatting code..."
+	go fmt ./...
 
-vet:
-	@echo "go vet..."
-	@go vet ./...
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -rf $(OUTPUT_DIR)
+	rm -f cloudbridge-client
+	rm -f cloudbridge-client.exe
+	rm -f coverage.out
+	rm -f coverage.html
+	rm -f *.log
 
-security-scan:
-	@echo "Security scan..."
-	@./scripts/security-scan.sh
+# Show version information
+version:
+	@echo "Version: $(VERSION)"
+	@echo "Build Type: $(BUILD_TYPE)"
+	@echo "Output Dir: $(OUTPUT_DIR)"
+	@echo "Go Version: $(shell go version)"
+	@echo "Go OS/Arch: $(shell go env GOOS)/$(shell go env GOARCH)"
 
-bench:
-	@echo "Benchmarks..."
-	@go test -bench=. ./...
+# Install dependencies
+deps:
+	@echo "Installing dependencies..."
+	go mod download
+	go mod tidy
 
-docs:
-	@echo "Generating docs (stdout)..."
-	@go doc -all ./...
+# Install build tools
+install-tools:
+	@echo "Installing build tools..."
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
-release: clean build-universal
-	@echo "Preparing release..."
-	@./scripts/prepare-release.sh
+# Development build (with debug info)
+dev-build:
+	@echo "Building development version..."
+	go build -o cloudbridge-client ./cmd/cloudbridge-client
 
-# Workflow testing
-test-workflows:
-	@echo "Testing workflows locally..."
-	@chmod +x test-workflow-local.sh
-	@./test-workflow-local.sh
+# Quick test build
+quick-test:
+	@echo "Quick test build..."
+	go build -o cloudbridge-client ./cmd/cloudbridge-client
+	@echo "Built: cloudbridge-client"
 
-test-workflows-act:
-	@echo "Testing workflows with act..."
-	@chmod +x test-workflows-with-act.sh
-	@./test-workflows-with-act.sh
+# Docker build (if needed)
+docker-build:
+	@echo "Building Docker image..."
+	docker build -t cloudbridge-client:$(VERSION) .
 
-test-workflows-dry-run:
-	@echo "Dry run of workflows with act..."
-	@act --dry-run
+# Release build (all platforms)
+release: clean
+	@echo "Building release for all platforms..."
+	@$(MAKE) build-all BUILD_TYPE=production VERSION=$(VERSION)
 
-list-workflows:
-	@echo "Listing available workflows..."
-	@act -l
-
-help:
-	@echo "Targets: build build-all build-russian build-enterprise build-packages build-containers build-vm build-universal test test-race test-coverage install uninstall deps lint fmt vet security-scan bench docs release clean help"
-	@echo "Workflow testing: test-workflows test-workflows-act test-workflows-dry-run list-workflows" 
+# CI build
+ci-build:
+	@echo "CI build..."
+	@$(MAKE) build-test VERSION=$(VERSION)
+	@$(MAKE) test
+	@$(MAKE) lint

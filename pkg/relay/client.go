@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/2gc-dev/cloudbridge-client/pkg/api"
 	"github.com/2gc-dev/cloudbridge-client/pkg/auth"
 	"github.com/2gc-dev/cloudbridge-client/pkg/config"
 	"github.com/2gc-dev/cloudbridge-client/pkg/errors"
@@ -40,6 +41,7 @@ type Client struct {
 	connected      bool
 	clientID       string
 	tenantID       string
+	tokenString    string
 	ctx            context.Context
 	cancel         context.CancelFunc
 }
@@ -69,8 +71,10 @@ func NewClient(cfg *types.Config) (*Client, error) {
 
 	// Create authentication manager
 	authManager, err := auth.NewAuthManager(&auth.AuthConfig{
-		Type:   cfg.Auth.Type,
-		Secret: cfg.Auth.Secret,
+		Type:           cfg.Auth.Type,
+		Secret:         cfg.Auth.Secret,
+		FallbackSecret: cfg.Auth.FallbackSecret,
+		SkipValidation: cfg.Auth.SkipValidation,
 		Keycloak: &auth.KeycloakConfig{
 			ServerURL: cfg.Auth.Keycloak.ServerURL,
 			Realm:     cfg.Auth.Keycloak.Realm,
@@ -205,8 +209,9 @@ func (c *Client) Authenticate(token string) error {
 		return fmt.Errorf("failed to extract claims: %w", err)
 	}
 
-	// Store tenant ID
+	// Store tenant ID and token string
 	c.tenantID = tenantID
+	c.tokenString = token
 
 	// Create auth message
 	authMsg, err := c.authManager.CreateAuthMessage(token)
@@ -478,8 +483,19 @@ func (c *Client) initializeP2PManager(token *jwt.Token) error {
 	// Create P2P logger
 	p2pLogger := &p2pLogger{client: c}
 
-	// Create P2P manager
-	c.p2pManager = p2p.NewManager(p2pConfig, p2pLogger)
+	// Create P2P manager with HTTP API support
+	// Use HTTPS API on port 30082 for P2P operations
+	apiConfig := &api.ManagerConfig{
+		BaseURL:            c.config.API.BaseURL,
+		InsecureSkipVerify: c.config.API.InsecureSkipVerify,
+		Timeout:            c.config.API.Timeout,
+		MaxRetries:         c.config.API.MaxRetries,
+		BackoffMultiplier:  c.config.API.BackoffMultiplier,
+		MaxBackoff:         c.config.API.MaxBackoff,
+	}
+
+	// Use stored token string for API manager
+	c.p2pManager = p2p.NewManagerWithAPI(p2pConfig, apiConfig, c.authManager, c.tokenString, p2pLogger)
 
 	// Start P2P manager
 	if err := c.p2pManager.Start(); err != nil {
