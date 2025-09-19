@@ -6,7 +6,7 @@ relay:
   ports:
     http_api: 8080      # HTTP API (Health, Registration)
     p2p_api: 8082      # P2P API (ICE signaling)
-    quic: 9091         # QUIC Transport (Main P2P) - обновлен порт
+    quic: 5553         # QUIC Transport (Main P2P) - обновлен порт
     stun: 19302        # STUN Server (NAT discovery)
     masque: 8443       # HTTPS/MASQUE (Corporate proxy)
     enhanced_quic: 9092 # Enhanced QUIC (Advanced features)

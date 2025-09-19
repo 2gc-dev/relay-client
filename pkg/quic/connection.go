@@ -42,6 +42,7 @@ func NewQUICConnection(logger Logger) *QUICConnection {
 		},
 		tlsConfig: &tls.Config{
 			InsecureSkipVerify: true, // For development - should be configurable
+			NextProtos:         []string{"cloudbridge-p2p", "h3", "h3-29", "h3-28", "h3-27"},
 		},
 	}
 }

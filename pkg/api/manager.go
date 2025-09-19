@@ -196,6 +196,13 @@ func (m *Manager) GetRelaySessionID() string {
 	return m.relaySessionID
 }
 
+// GetToken returns the authentication token
+func (m *Manager) GetToken() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.token
+}
+
 // DiscoverPeers discovers peers in the tenant
 func (m *Manager) DiscoverPeers() (*DiscoverResponse, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)

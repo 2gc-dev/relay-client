@@ -133,6 +133,11 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to initialize QUIC: %w", err)
 	}
 
+	// Connect to relay server with authentication
+	if err := m.connectToRelayServer(); err != nil {
+		return fmt.Errorf("failed to connect to relay server: %w", err)
+	}
+
 	// Start peer discovery
 	if m.apiManager != nil {
 		go m.startPeerDiscovery()
@@ -240,13 +245,64 @@ func (m *Manager) initializeQUIC() error {
 	// Create QUIC connection manager
 	m.quicConn = quic.NewQUICConnection(m.logger)
 
-    // Start listening for incoming connections on configured port (9091)
-    listenAddr := ":9091"
+    // Start listening for incoming connections on configured port (5553)
+    listenAddr := ":5553"
 	if err := m.quicConn.Listen(m.ctx, listenAddr); err != nil {
 		return fmt.Errorf("failed to start QUIC listener: %w", err)
 	}
 
 	m.logger.Info("QUIC listener started", "address", listenAddr)
+	return nil
+}
+
+// connectToRelayServer connects to the relay server with authentication
+func (m *Manager) connectToRelayServer() error {
+	if m.apiManager == nil {
+		return fmt.Errorf("API manager not available")
+	}
+
+	// Get token from API manager
+	token := m.apiManager.GetToken()
+	if token == "" {
+		return fmt.Errorf("no token available for authentication")
+	}
+
+	// Connect to relay server QUIC endpoint
+	relayAddr := "10.244.3.33:5553" // Direct pod IP for testing
+	m.logger.Info("Connecting to relay server", "address", relayAddr)
+
+	// Create QUIC connection to relay server
+	err := m.quicConn.Connect(m.ctx, relayAddr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to relay server: %w", err)
+	}
+
+	// Create authentication stream
+	stream, err := m.quicConn.CreateStream(m.ctx, "auth")
+	if err != nil {
+		return fmt.Errorf("failed to create auth stream: %w", err)
+	}
+
+	// Send authentication token in the expected format
+	authData := fmt.Sprintf("AUTH %s", token)
+	_, err = stream.Write([]byte(authData))
+	if err != nil {
+		return fmt.Errorf("failed to send auth token: %w", err)
+	}
+
+	// Read authentication response
+	buffer := make([]byte, 1024)
+	n, err := stream.Read(buffer)
+	if err != nil {
+		return fmt.Errorf("failed to read auth response: %w", err)
+	}
+
+	response := string(buffer[:n])
+	if response != "AUTH_OK" {
+		return fmt.Errorf("authentication failed: %s", response)
+	}
+
+	m.logger.Info("Successfully authenticated with relay server")
 	return nil
 }
 
@@ -553,7 +609,7 @@ func ExtractP2PConfigFromToken(authManager *auth.AuthManager, token *jwt.Token) 
 			MTU:         networkConfig.MTU,
             STUNServers: []string{"edge.2gc.ru:19302"},
             TURNServers: []string{},
-            QUICPort:    9091,
+            QUICPort:    5553,
 			ICEPort:     19302,
 		}
 	}
