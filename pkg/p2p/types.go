@@ -13,21 +13,21 @@ const (
 
 // QUICConfig represents QUIC configuration
 type QUICConfig struct {
-	ListenPort        int    `json:"listen_port,omitempty"`
-	HandshakeTimeout  string `json:"handshake_timeout,omitempty"`
-	IdleTimeout       string `json:"idle_timeout,omitempty"`
-	MaxStreams        int    `json:"max_streams,omitempty"`
-	MaxStreamData     int    `json:"max_stream_data,omitempty"`
-	KeepAlivePeriod   string `json:"keep_alive_period,omitempty"`
-	InsecureSkipVerify bool  `json:"insecure_skip_verify,omitempty"`
+	ListenPort         int    `json:"listen_port,omitempty"`
+	HandshakeTimeout   string `json:"handshake_timeout,omitempty"`
+	IdleTimeout        string `json:"idle_timeout,omitempty"`
+	MaxStreams         int    `json:"max_streams,omitempty"`
+	MaxStreamData      int    `json:"max_stream_data,omitempty"`
+	KeepAlivePeriod    string `json:"keep_alive_period,omitempty"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify,omitempty"`
 }
 
 // MeshConfig represents mesh network configuration from JWT
 type MeshConfig struct {
-	AutoDiscovery    bool        `json:"auto_discovery"`
-	Persistent       bool        `json:"persistent"`
-	Routing          string      `json:"routing"`    // "hybrid", "direct", "relay"
-	Encryption       string      `json:"encryption"` // "quic", "tls"
+	AutoDiscovery     bool        `json:"auto_discovery"`
+	Persistent        bool        `json:"persistent"`
+	Routing           string      `json:"routing"`    // "hybrid", "direct", "relay"
+	Encryption        string      `json:"encryption"` // "quic", "tls"
 	HeartbeatInterval interface{} `json:"heartbeat_interval"`
 }
 
@@ -51,15 +51,15 @@ type NetworkConfig struct {
 
 // P2PConfig represents complete P2P configuration
 type P2PConfig struct {
-	ConnectionType    ConnectionType   `json:"connection_type"`
-	QUICConfig        *QUICConfig      `json:"quic_config,omitempty"`
-	MeshConfig        *MeshConfig      `json:"mesh_config,omitempty"`
-	PeerWhitelist     *PeerWhitelist   `json:"peer_whitelist,omitempty"`
-	NetworkConfig     *NetworkConfig   `json:"network_config,omitempty"`
-	TenantID          string           `json:"tenant_id,omitempty"`
-	Permissions       []string         `json:"permissions,omitempty"`
-	HeartbeatInterval time.Duration    `json:"heartbeat_interval,omitempty"`
-	HeartbeatTimeout  time.Duration    `json:"heartbeat_timeout,omitempty"`
+	ConnectionType    ConnectionType `json:"connection_type"`
+	QUICConfig        *QUICConfig    `json:"quic_config,omitempty"`
+	MeshConfig        *MeshConfig    `json:"mesh_config,omitempty"`
+	PeerWhitelist     *PeerWhitelist `json:"peer_whitelist,omitempty"`
+	NetworkConfig     *NetworkConfig `json:"network_config,omitempty"`
+	TenantID          string         `json:"tenant_id,omitempty"`
+	Permissions       []string       `json:"permissions,omitempty"`
+	HeartbeatInterval time.Duration  `json:"heartbeat_interval,omitempty"`
+	HeartbeatTimeout  time.Duration  `json:"heartbeat_timeout,omitempty"`
 }
 
 // Peer represents a discovered peer in the mesh network
@@ -86,15 +86,15 @@ type MeshTopology struct {
 
 // P2PStatus represents the current status of P2P connection
 type P2PStatus struct {
-	IsConnected      bool           `json:"is_connected"`
-	ConnectionType   ConnectionType `json:"connection_type"`
-	ActivePeers      int            `json:"active_peers"`
-	TotalPeers       int            `json:"total_peers"`
-	MeshEnabled      bool           `json:"mesh_enabled"`
-	QUICReady        bool           `json:"quic_ready"`
-	ICEReady         bool           `json:"ice_ready"`
-	ActiveConnections int           `json:"active_connections"`
-	LastError        string         `json:"last_error,omitempty"`
+	IsConnected       bool           `json:"is_connected"`
+	ConnectionType    ConnectionType `json:"connection_type"`
+	ActivePeers       int            `json:"active_peers"`
+	TotalPeers        int            `json:"total_peers"`
+	MeshEnabled       bool           `json:"mesh_enabled"`
+	QUICReady         bool           `json:"quic_ready"`
+	ICEReady          bool           `json:"ice_ready"`
+	ActiveConnections int            `json:"active_connections"`
+	LastError         string         `json:"last_error,omitempty"`
 }
 
 // P2PMessage represents a P2P protocol message

@@ -2,23 +2,25 @@
 
 # Relay Configuration
 relay:
-  host: "b1.2gc.space"  # Новый домен через CDN
+  host: "localhost"    # Minikube localhost для тестирования
   ports:
     http_api: 8080      # HTTP API (Health, Registration)
     p2p_api: 8082      # P2P API (ICE signaling)
-    quic: 5553         # QUIC Transport (Main P2P) - обновлен порт
+    quic: 5553         # QUIC Transport (Main P2P)
     stun: 19302        # STUN Server (NAT discovery)
     masque: 8443       # HTTPS/MASQUE (Corporate proxy)
     enhanced_quic: 9092 # Enhanced QUIC (Advanced features)
+    turn: 3478         # TURN Server (NAT traversal)
+    derp: 3479         # DERP Server (Fallback relay)
   timeout: "30s"
   tls:
-    enabled: true
+    enabled: false              # Отключаем TLS для тестирования в Minikube
     min_version: "1.3"
-    verify_cert: true
+    verify_cert: false          # Отключаем проверку сертификатов для тестирования
     ca_cert: ""
     client_cert: ""
     client_key: ""
-    server_name: "b1.2gc.space"  # Обновляем server_name
+    server_name: "localhost"    # Minikube localhost
 
 # Authentication Configuration
 auth:
@@ -76,10 +78,15 @@ heartbeat:
 # ICE Configuration
 ice:
   stun_servers:
-    - "b1.2gc.space:19302"  # Обновляем STUN сервер
-  turn_servers: []
+    - "localhost:19302"     # STUN сервер в Minikube
+  turn_servers:
+    - "localhost:3478"      # TURN сервер в Minikube
+  derp_servers:
+    - "localhost:3479"      # DERP сервер в Minikube
   timeout: "30s"
   max_binding_requests: 7
+  connectivity_checks: true
+  candidate_gathering: true
 
 # QUIC Configuration
 quic:
@@ -88,7 +95,9 @@ quic:
   max_streams: 100
   max_stream_data: 1048576  # 1MB
   keep_alive_period: "15s"
-  insecure_skip_verify: false
+  insecure_skip_verify: true  # Для тестирования в Minikube
+  masque_support: true        # Поддержка MASQUE протокола
+  http_datagrams: true        # Поддержка HTTP Datagrams
 
 # P2P Configuration
 p2p:
@@ -97,12 +106,52 @@ p2p:
   peer_discovery_interval: "30s"
   connection_retry_interval: "5s"
   max_retry_attempts: 3
+  fallback_enabled: true        # Включить fallback механизмы
+  derp_fallback: true          # DERP fallback
+  websocket_fallback: true     # WebSocket fallback
+
+# TURN Configuration
+turn:
+  enabled: true
+  servers:
+    - "localhost:3478"
+  username: "cloudbridge"
+  password: "cloudbridge123"
+  realm: "cloudbridge.local"
+  timeout: "30s"
+  max_allocations: 10
+
+# DERP Configuration
+derp:
+  enabled: true
+  servers:
+    - "localhost:3479"
+  timeout: "30s"
+  max_connections: 100
+  fallback_priority: 1
+
+# WebSocket Tunneling Configuration
+websocket:
+  enabled: true
+  endpoint: "ws://localhost:8080/ws"
+  timeout: "30s"
+  ping_interval: "15s"
+  max_reconnect_attempts: 5
+
+# WireGuard Configuration
+wireguard:
+  enabled: true
+  interface_name: "wg-cloudbridge"
+  port: 51820
+  mtu: 1420
+  persistent_keepalive: "25s"
 
 # API Configuration
 api:
-  base_url: "https://edge.2gc.ru:9444"  # HTTPS production API
-  p2p_api_url: "https://edge.2gc.ru:9444"  # HTTPS production API
-  insecure_skip_verify: false
+  base_url: "http://localhost:8082"      # P2P API в Minikube
+  p2p_api_url: "http://localhost:8082"   # P2P API в Minikube
+  heartbeat_url: "http://localhost:8082" # Heartbeat API в Minikube
+  insecure_skip_verify: true             # Для тестирования в Minikube
   timeout: "30s"
   max_retries: 3
   backoff_multiplier: 2.0

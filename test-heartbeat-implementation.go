@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -141,7 +144,7 @@ func main() {
 	fmt.Println("✅ API Manager поддерживает heartbeat")
 	fmt.Println("✅ Структуры данных корректны")
 	fmt.Println("✅ Токен валиден и содержит tenant_id")
-	
+
 	if err != nil {
 		fmt.Println("⚠️  Relay сервер недоступен (ожидаемо)")
 		fmt.Println("   - Heartbeat будет работать, когда сервер станет доступен")

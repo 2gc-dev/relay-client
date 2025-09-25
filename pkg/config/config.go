@@ -43,7 +43,6 @@ func LoadConfig(configPath string) (*types.Config, error) {
 	if err := viper.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-	
 
 	// Substitute environment variables in string fields
 	substituteEnvVars(&config)
@@ -60,60 +59,78 @@ func LoadConfig(configPath string) (*types.Config, error) {
 func setDefaults() {
 	// Relay configuration
 	viper.SetDefault("relay.host", "b1.2gc.space") // Новый домен через CDN
-    viper.SetDefault("relay.port", 9091)
-    viper.SetDefault("relay.ports.http_api", 8083)
-    viper.SetDefault("relay.ports.p2p_api", 8083)
-    viper.SetDefault("relay.ports.quic", 9091)
+	viper.SetDefault("relay.port", 9091)
+	viper.SetDefault("relay.ports.http_api", 8083)
+	viper.SetDefault("relay.ports.p2p_api", 8083)
+	viper.SetDefault("relay.ports.quic", 9091)
 	viper.SetDefault("relay.ports.stun", 19302)
 	viper.SetDefault("relay.ports.masque", 8443)
 	viper.SetDefault("relay.ports.enhanced_quic", 9092)
+	viper.SetDefault("relay.ports.turn", 3478)
+	viper.SetDefault("relay.ports.derp", 3479)
 	viper.SetDefault("relay.timeout", "30s")
+	// Enable TLS by default for secure communications
 	viper.SetDefault("relay.tls.enabled", true)
 	viper.SetDefault("relay.tls.min_version", "1.3")
+	// Verify relay server certificate by default
 	viper.SetDefault("relay.tls.verify_cert", true)
-	viper.SetDefault("relay.tls.server_name", "b1.2gc.space") // Новый домен через CDN
-	
+	viper.SetDefault("relay.tls.server_name", "localhost") // Minikube localhost
+
 	// Authentication
 	viper.SetDefault("auth.type", "jwt")
 	viper.SetDefault("auth.fallback_secret", "")
 	viper.SetDefault("auth.skip_validation", false)
 	viper.SetDefault("auth.keycloak.enabled", false)
-	
+
 	// Rate limiting
 	viper.SetDefault("rate_limiting.enabled", true)
 	viper.SetDefault("rate_limiting.max_retries", 3)
 	viper.SetDefault("rate_limiting.backoff_multiplier", 2.0)
 	viper.SetDefault("rate_limiting.max_backoff", "30s")
-	
+
 	// Logging
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("logging.format", "json")
 	viper.SetDefault("logging.output", "stdout")
-	
+
+	// Metrics and Pushgateway
+	viper.SetDefault("metrics.enabled", true)
+	viper.SetDefault("metrics.prometheus_port", 9091)
+	viper.SetDefault("metrics.pushgateway.enabled", false)
+	viper.SetDefault("metrics.pushgateway.push_url", "http://localhost:9091")
+	viper.SetDefault("metrics.pushgateway.job_name", "cloudbridge-client")
+	viper.SetDefault("metrics.pushgateway.instance", "")
+	viper.SetDefault("metrics.pushgateway.push_interval", "30s")
+
 	// API configuration - hardcoded URLs (development HTTP)
-    viper.SetDefault("api.base_url", "http://edge.2gc.ru:8083")
-    viper.SetDefault("api.p2p_api_url", "http://edge.2gc.ru:8083")
-    viper.SetDefault("api.heartbeat_url", "http://edge.2gc.ru:8083")
+	viper.SetDefault("api.base_url", "http://edge.2gc.ru:8083")
+	viper.SetDefault("api.p2p_api_url", "http://edge.2gc.ru:8083")
+	viper.SetDefault("api.heartbeat_url", "http://edge.2gc.ru:8083")
 	viper.SetDefault("api.insecure_skip_verify", false)
 	viper.SetDefault("api.timeout", "30s")
 	viper.SetDefault("api.max_retries", 3)
 	viper.SetDefault("api.backoff_multiplier", 2.0)
 	viper.SetDefault("api.max_backoff", "60s")
-	
+
 	// ICE configuration
-	viper.SetDefault("ice.stun_servers", []string{"edge.2gc.ru:19302"})
-	viper.SetDefault("ice.turn_servers", []string{})
+	viper.SetDefault("ice.stun_servers", []string{"localhost:19302"})
+	viper.SetDefault("ice.turn_servers", []string{"localhost:3478"})
+	viper.SetDefault("ice.derp_servers", []string{"localhost:3479"})
 	viper.SetDefault("ice.timeout", "30s")
 	viper.SetDefault("ice.max_binding_requests", 7)
-	
+	viper.SetDefault("ice.connectivity_checks", true)
+	viper.SetDefault("ice.candidate_gathering", true)
+
 	// QUIC configuration
 	viper.SetDefault("quic.handshake_timeout", "10s")
 	viper.SetDefault("quic.idle_timeout", "30s")
 	viper.SetDefault("quic.max_streams", 100)
 	viper.SetDefault("quic.max_stream_data", 1048576) // 1MB
 	viper.SetDefault("quic.keep_alive_period", "15s")
-	viper.SetDefault("quic.insecure_skip_verify", false)
-	
+	viper.SetDefault("quic.insecure_skip_verify", true)
+	viper.SetDefault("quic.masque_support", true)
+	viper.SetDefault("quic.http_datagrams", true)
+
 	// P2P configuration
 	viper.SetDefault("p2p.max_connections", 1000)
 	viper.SetDefault("p2p.session_timeout", "300s")
@@ -122,6 +139,39 @@ func setDefaults() {
 	viper.SetDefault("p2p.max_retry_attempts", 3)
 	viper.SetDefault("p2p.heartbeat_interval", "30s")
 	viper.SetDefault("p2p.heartbeat_timeout", "10s")
+	viper.SetDefault("p2p.fallback_enabled", true)
+	viper.SetDefault("p2p.derp_fallback", true)
+	viper.SetDefault("p2p.websocket_fallback", true)
+
+	// TURN configuration
+	viper.SetDefault("turn.enabled", true)
+	viper.SetDefault("turn.servers", []string{"localhost:3478"})
+	viper.SetDefault("turn.username", "cloudbridge")
+	viper.SetDefault("turn.password", "cloudbridge123")
+	viper.SetDefault("turn.realm", "cloudbridge.local")
+	viper.SetDefault("turn.timeout", "30s")
+	viper.SetDefault("turn.max_allocations", 10)
+
+	// DERP configuration
+	viper.SetDefault("derp.enabled", true)
+	viper.SetDefault("derp.servers", []string{"localhost:3479"})
+	viper.SetDefault("derp.timeout", "30s")
+	viper.SetDefault("derp.max_connections", 100)
+	viper.SetDefault("derp.fallback_priority", 1)
+
+	// WebSocket configuration
+	viper.SetDefault("websocket.enabled", true)
+	viper.SetDefault("websocket.endpoint", "ws://localhost:8080/ws")
+	viper.SetDefault("websocket.timeout", "30s")
+	viper.SetDefault("websocket.ping_interval", "15s")
+	viper.SetDefault("websocket.max_reconnect_attempts", 5)
+
+	// WireGuard configuration
+	viper.SetDefault("wireguard.enabled", true)
+	viper.SetDefault("wireguard.interface_name", "wg-cloudbridge")
+	viper.SetDefault("wireguard.port", 51820)
+	viper.SetDefault("wireguard.mtu", 1420)
+	viper.SetDefault("wireguard.persistent_keepalive", "25s")
 }
 
 // validateConfig validates the configuration
@@ -202,19 +252,36 @@ func CreateTLSConfig(c *types.Config) (*tls.Config, error) {
 		tlsConfig.ServerName = c.Relay.Host
 	}
 
-	// Load CA certificate if provided
-	if c.Relay.TLS.CACert != "" {
-		caCert, readErr := os.ReadFile(c.Relay.TLS.CACert)
+	// Build root CA pool from system trust store first
+	var rootCAs *x509.CertPool
+	var sysPoolErr error
+	rootCAs, sysPoolErr = x509.SystemCertPool()
+	if sysPoolErr != nil || rootCAs == nil {
+		// Fallback to empty pool if system pool unavailable (e.g., Windows in Go <1.20)
+		rootCAs = x509.NewCertPool()
+	}
+
+	// Load additional CA certificate provided via config or CLOUDBRIDGE_CA env
+	caPath := c.Relay.TLS.CACert
+	if caPath == "" {
+		// Allow override via environment variable (simple flat name)
+		caPath = os.Getenv("CLOUDBRIDGE_CA")
+	}
+
+	if caPath != "" {
+		caCert, readErr := os.ReadFile(caPath)
 		if readErr != nil {
 			return nil, fmt.Errorf("failed to read CA certificate: %w", readErr)
 		}
 
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
+		if ok := rootCAs.AppendCertsFromPEM(caCert); !ok {
 			return nil, fmt.Errorf("failed to append CA certificate")
 		}
+	}
 
-		tlsConfig.RootCAs = caCertPool
+	// Only set RootCAs if we have something (non-nil)
+	if rootCAs != nil {
+		tlsConfig.RootCAs = rootCAs
 	}
 
 	// Load client certificate if provided

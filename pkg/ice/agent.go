@@ -53,7 +53,7 @@ func (a *ICEAgent) Start() error {
 		}
 		urls[i] = uri
 	}
-	
+
 	a.config = &ice.AgentConfig{
 		NetworkTypes: []ice.NetworkType{ice.NetworkTypeUDP4, ice.NetworkTypeUDP6},
 		Urls:         urls,
@@ -84,7 +84,7 @@ func (a *ICEAgent) Stop() error {
 	}
 
 	a.logger.Info("Stopping ICE agent")
-	
+
 	if err := a.agent.Close(); err != nil {
 		a.logger.Error("Failed to close ICE agent", "error", err)
 		return err
@@ -212,7 +212,7 @@ func ValidateSTUNServer(server string) error {
 
 	// Send STUN binding request
 	request := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
-	
+
 	_, err = conn.Write(request.Raw)
 	if err != nil {
 		return fmt.Errorf("failed to send STUN request: %w", err)
@@ -249,7 +249,7 @@ func GetPublicIP(stunServer string) (net.IP, error) {
 
 	// Send STUN binding request
 	request := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
-	
+
 	_, err = conn.Write(request.Raw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send STUN request: %w", err)

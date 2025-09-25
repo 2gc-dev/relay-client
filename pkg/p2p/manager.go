@@ -17,22 +17,22 @@ import (
 
 // Manager handles P2P connections using QUIC + ICE/STUN/TURN
 type Manager struct {
-	config     *P2PConfig
-	iceAgent   *ice.ICEAgent
-	quicConn   *quic.QUICConnection
-	mesh       *MeshNetwork
-	status     *P2PStatus
-	apiManager *api.Manager
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.RWMutex
-	logger     Logger
-	sessionID  string
-	peerID     string
-	tenantID   string
-	token      string
-	relaySessionID string
-	connections map[string]*PeerConnection
+	config          *P2PConfig
+	iceAgent        *ice.ICEAgent
+	quicConn        *quic.QUICConnection
+	mesh            *MeshNetwork
+	status          *P2PStatus
+	apiManager      *api.Manager
+	ctx             context.Context
+	cancel          context.CancelFunc
+	mu              sync.RWMutex
+	logger          Logger
+	sessionID       string
+	peerID          string
+	tenantID        string
+	token           string
+	relaySessionID  string
+	connections     map[string]*PeerConnection
 	heartbeatTicker *time.Ticker
 }
 
@@ -220,10 +220,10 @@ func (m *Manager) initializeICE() error {
 
 	// Hardcoded STUN servers for edge.2gc.ru
 	stunServers := []string{"edge.2gc.ru:19302"}
-	
+
 	// Create ICE agent
 	m.iceAgent = ice.NewICEAgent(stunServers, []string{}, m.logger)
-	
+
 	if err := m.iceAgent.Start(); err != nil {
 		return fmt.Errorf("failed to start ICE agent: %w", err)
 	}
@@ -245,8 +245,8 @@ func (m *Manager) initializeQUIC() error {
 	// Create QUIC connection manager
 	m.quicConn = quic.NewQUICConnection(m.logger)
 
-    // Start listening for incoming connections on configured port (5553)
-    listenAddr := ":5553"
+	// Start listening for incoming connections on configured port (5553)
+	listenAddr := ":5553"
 	if err := m.quicConn.Listen(m.ctx, listenAddr); err != nil {
 		return fmt.Errorf("failed to start QUIC listener: %w", err)
 	}
@@ -386,8 +386,8 @@ func (m *Manager) getRemoteCandidatesFromRelay(targetPeerID string) ([]pionice.C
 
 	// Request remote candidates
 	req := &api.ICECandidateRequest{
-		SessionID:     m.sessionID,
-		TargetPeerID:  targetPeerID,
+		SessionID:    m.sessionID,
+		TargetPeerID: targetPeerID,
 	}
 
 	resp, err := m.apiManager.GetRemoteICECandidates(req)
@@ -408,7 +408,7 @@ func (m *Manager) getRemoteCandidatesFromRelay(targetPeerID string) ([]pionice.C
 			apiCandidate.Port,
 			apiCandidate.Type,
 		)
-		
+
 		candidate, err := pionice.UnmarshalCandidate(candidateStr)
 		if err != nil {
 			m.logger.Error("Failed to unmarshal candidate", "error", err, "candidate", candidateStr)
@@ -454,7 +454,7 @@ func (m *Manager) establishQUICConnection(targetPeerID string) error {
 
 	// Connect to remote peer via QUIC
 	remoteAddr := fmt.Sprintf("%s:%d", pair.Remote.Address(), pair.Remote.Port())
-	
+
 	stream, err := m.quicConn.CreateStream(m.ctx, fmt.Sprintf("peer_%s", targetPeerID))
 	if err != nil {
 		return fmt.Errorf("failed to create QUIC stream: %w", err)
@@ -581,7 +581,7 @@ func ExtractP2PConfigFromToken(authManager *auth.AuthManager, token *jwt.Token) 
 		return nil, fmt.Errorf("failed to extract tenant ID: %w", err)
 	}
 
-    // Convert auth types to p2p types
+	// Convert auth types to p2p types
 	var p2pMeshConfig *MeshConfig
 	if meshConfig != nil {
 		p2pMeshConfig = &MeshConfig{
@@ -607,20 +607,20 @@ func ExtractP2PConfigFromToken(authManager *auth.AuthManager, token *jwt.Token) 
 			Subnet:      networkConfig.Subnet,
 			DNS:         networkConfig.DNS,
 			MTU:         networkConfig.MTU,
-            STUNServers: []string{"edge.2gc.ru:19302"},
-            TURNServers: []string{},
-            QUICPort:    5553,
+			STUNServers: []string{"edge.2gc.ru:19302"},
+			TURNServers: []string{},
+			QUICPort:    5553,
 			ICEPort:     19302,
 		}
 	}
 
 	return &P2PConfig{
-		ConnectionType:  ConnectionType(connectionType),
-		MeshConfig:      p2pMeshConfig,
-		PeerWhitelist:   p2pPeerWhitelist,
-		NetworkConfig:   p2pNetworkConfig,
-		TenantID:        tenantID,
-		Permissions:     permissions,
+		ConnectionType: ConnectionType(connectionType),
+		MeshConfig:     p2pMeshConfig,
+		PeerWhitelist:  p2pPeerWhitelist,
+		NetworkConfig:  p2pNetworkConfig,
+		TenantID:       tenantID,
+		Permissions:    permissions,
 	}, nil
 }
 
@@ -632,10 +632,10 @@ func (m *Manager) startHeartbeat() {
 	}
 
 	m.heartbeatTicker = time.NewTicker(m.config.HeartbeatInterval)
-	
+
 	go func() {
 		defer m.heartbeatTicker.Stop()
-		
+
 		for {
 			select {
 			case <-m.ctx.Done():
@@ -648,14 +648,14 @@ func (m *Manager) startHeartbeat() {
 			}
 		}
 	}()
-	
+
 	m.logger.Info("Heartbeat routine started", "interval", m.config.HeartbeatInterval)
 }
 
 // sendHeartbeat sends a heartbeat to the relay server
 func (m *Manager) sendHeartbeat() error {
 	if m.tenantID == "" || m.peerID == "" || m.token == "" {
-		return fmt.Errorf("missing required fields for heartbeat: tenantID=%s, peerID=%s, token=%s", 
+		return fmt.Errorf("missing required fields for heartbeat: tenantID=%s, peerID=%s, token=%s",
 			m.tenantID, m.peerID, m.token)
 	}
 

@@ -12,11 +12,11 @@ import (
 
 // QUICConnection manages QUIC connections and streams
 type QUICConnection struct {
-	conn     *quic.Conn
-	streams  map[string]*quic.Stream
-	mu       sync.RWMutex
-	logger   Logger
-	config   *quic.Config
+	conn      *quic.Conn
+	streams   map[string]*quic.Stream
+	mu        sync.RWMutex
+	logger    Logger
+	config    *quic.Config
 	tlsConfig *tls.Config
 }
 
@@ -34,14 +34,15 @@ func NewQUICConnection(logger Logger) *QUICConnection {
 		streams: make(map[string]*quic.Stream),
 		logger:  logger,
 		config: &quic.Config{
-			HandshakeIdleTimeout: 10 * time.Second,
-			MaxIdleTimeout:       30 * time.Second,
-			MaxIncomingStreams:   100,
+			HandshakeIdleTimeout:  10 * time.Second,
+			MaxIdleTimeout:        30 * time.Second,
+			MaxIncomingStreams:    100,
 			MaxIncomingUniStreams: 100,
-			KeepAlivePeriod:      15 * time.Second,
+			KeepAlivePeriod:       15 * time.Second,
 		},
 		tlsConfig: &tls.Config{
-			InsecureSkipVerify: true, // For development - should be configurable
+			InsecureSkipVerify: false,
+			MinVersion:         tls.VersionTLS13,
 			NextProtos:         []string{"cloudbridge-p2p", "h3", "h3-29", "h3-28", "h3-27"},
 		},
 	}
@@ -336,7 +337,7 @@ func (q *QUICConnection) handleStream(streamID string, stream *quic.Stream) {
 		}
 
 		q.logger.Debug("Data received on stream", "stream_id", streamID, "bytes", n)
-		
+
 		// Echo back the data (for testing)
 		if _, err := stream.Write(buffer[:n]); err != nil {
 			q.logger.Error("Failed to write to stream", "stream_id", streamID, "error", err)

@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -14,34 +17,34 @@ import (
 func main() {
 	fmt.Println("🚀 Testing QUIC Connection to 5553")
 	fmt.Println("==================================================")
-	
+
 	// Test QUIC server on port 5553
 	host := "95.163.250.190:5553"
-	
+
 	fmt.Printf("Testing QUIC server: %s\n", host)
-	
+
 	// Create TLS config
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true, // For testing
 		NextProtos:         []string{"cloudbridge-p2p"},
 	}
-	
+
 	// Create QUIC config
 	quicConfig := &quic.Config{
-		HandshakeIdleTimeout: 10 * time.Second,
-		MaxIdleTimeout:       30 * time.Second,
-		MaxIncomingStreams:   100,
+		HandshakeIdleTimeout:  10 * time.Second,
+		MaxIdleTimeout:        30 * time.Second,
+		MaxIncomingStreams:    100,
 		MaxIncomingUniStreams: 100,
-		KeepAlivePeriod:      15 * time.Second,
+		KeepAlivePeriod:       15 * time.Second,
 	}
-	
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	
+
 	fmt.Println("Attempting QUIC connection...")
 	start := time.Now()
-	
+
 	// Connect to QUIC server
 	conn, err := quic.DialAddr(ctx, host, tlsConfig, quicConfig)
 	if err != nil {
@@ -49,14 +52,14 @@ func main() {
 		return
 	}
 	defer conn.CloseWithError(0, "test completed")
-	
+
 	fmt.Printf("✅ QUIC connection established in %v\n", time.Since(start))
-	
+
 	// Get connection info
 	fmt.Printf("✅ Connection State: %s\n", conn.ConnectionState().TLS.Version)
 	fmt.Printf("✅ Remote Address: %s\n", conn.RemoteAddr())
 	fmt.Printf("✅ Local Address: %s\n", conn.LocalAddr())
-	
+
 	// Test opening a stream
 	fmt.Println("Testing stream creation...")
 	stream, err := conn.OpenStreamSync(ctx)
@@ -65,27 +68,27 @@ func main() {
 		return
 	}
 	defer stream.Close()
-	
+
 	fmt.Println("✅ Stream opened successfully")
-	
+
 	// Send test data
 	testData := []byte("AUTH test-jwt-token")
 	fmt.Printf("Sending test data: %s\n", string(testData))
-	
+
 	_, err = stream.Write(testData)
 	if err != nil {
 		fmt.Printf("❌ Failed to write to stream: %v\n", err)
 		return
 	}
-	
+
 	fmt.Println("✅ Data sent successfully")
-	
+
 	// Close write side
 	stream.Close()
-	
+
 	// Try to read response (with timeout)
 	stream.SetReadDeadline(time.Now().Add(5 * time.Second))
-	
+
 	buffer := make([]byte, 1024)
 	n, err := stream.Read(buffer)
 	if err != nil && err != io.EOF {
@@ -98,6 +101,6 @@ func main() {
 	} else {
 		fmt.Printf("✅ Response received: %s\n", string(buffer[:n]))
 	}
-	
+
 	fmt.Println("✅ QUIC test completed successfully!")
 }

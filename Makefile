@@ -1,182 +1,246 @@
 # CloudBridge Client Makefile
+# Cross-platform build system
 
-# Default values
+# Build variables
 VERSION ?= dev
-BUILD_TYPE ?= test
-OUTPUT_DIR ?= dist
+BUILD_TYPE ?= development
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GO_VERSION := $(shell go version | cut -d' ' -f3)
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Linker flags
+LDFLAGS := -s -w \
+	-X main.version=$(VERSION) \
+	-X main.buildType=$(BUILD_TYPE) \
+	-X main.buildTime=$(BUILD_TIME) \
+	-X main.gitCommit=$(GIT_COMMIT)
 
 # Build targets
-.PHONY: all build test clean help version
+BINARY_NAME := cloudbridge-client
+CMD_DIR := ./cmd/cloudbridge-client
 
 # Default target
+.PHONY: all
 all: build
 
-# Help target
-help:
-	@echo "CloudBridge Client Build System"
-	@echo "==============================="
-	@echo ""
-	@echo "Available targets:"
-	@echo "  build          - Build for current platform"
-	@echo "  build-all      - Build for all platforms"
-	@echo "  build-test     - Build test version for current platform"
-	@echo "  build-demo     - Build demo version for current platform"
-	@echo "  build-prod     - Build production version for current platform"
-	@echo "  test           - Run tests"
-	@echo "  clean          - Clean build artifacts"
-	@echo "  version        - Show version information"
-	@echo ""
-	@echo "Variables:"
-	@echo "  VERSION        - Version to build (default: dev)"
-	@echo "  BUILD_TYPE     - Build type: test, demo, production (default: test)"
-	@echo "  OUTPUT_DIR     - Output directory (default: dist)"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make build-test VERSION=1.0.0"
-	@echo "  make build-prod VERSION=1.0.0"
-	@echo "  make build-all BUILD_TYPE=demo"
-
 # Build for current platform
+.PHONY: build
 build:
-	@echo "Building for current platform..."
-	@./scripts/build-with-config.sh \
-		--os $(shell go env GOOS) \
-		--arch $(shell go env GOARCH) \
-		--type $(BUILD_TYPE) \
-		--version $(VERSION) \
-		--output-dir $(OUTPUT_DIR)
-
-# Build test version
-build-test:
-	@echo "Building test version..."
-	@./scripts/build-with-config.sh \
-		--os $(shell go env GOOS) \
-		--arch $(shell go env GOARCH) \
-		--type test \
-		--version $(VERSION) \
-		--output-dir $(OUTPUT_DIR)
-
-# Build demo version
-build-demo:
-	@echo "Building demo version..."
-	@./scripts/build-with-config.sh \
-		--os $(shell go env GOOS) \
-		--arch $(shell go env GOARCH) \
-		--type demo \
-		--version $(VERSION) \
-		--output-dir $(OUTPUT_DIR)
-
-# Build production version
-build-prod:
-	@echo "Building production version..."
-	@./scripts/build-with-config.sh \
-		--os $(shell go env GOOS) \
-		--arch $(shell go env GOARCH) \
-		--type production \
-		--version $(VERSION) \
-		--output-dir $(OUTPUT_DIR)
+	@echo "Building CloudBridge Client for current platform..."
+	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) $(CMD_DIR)
+	@echo "Build complete: $(BINARY_NAME)"
 
 # Build for all platforms
-build-all:
-	@echo "Building for all platforms..."
-	@./scripts/build-with-config.sh --os linux --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
-	@./scripts/build-with-config.sh --os linux --arch arm64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
-	@./scripts/build-with-config.sh --os windows --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
-	@./scripts/build-with-config.sh --os darwin --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
-	@./scripts/build-with-config.sh --os darwin --arch arm64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+.PHONY: build-all
+build-all: build-linux build-windows build-darwin
+	@echo "All platform builds complete"
 
-# Build specific platform
-build-linux:
-	@echo "Building for Linux..."
-	@./scripts/build-with-config.sh --os linux --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+# Linux builds
+.PHONY: build-linux
+build-linux: build-linux-amd64 build-linux-arm64
 
-build-windows:
-	@echo "Building for Windows..."
-	@./scripts/build-with-config.sh --os windows --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+.PHONY: build-linux-amd64
+build-linux-amd64:
+	@echo "Building for Linux AMD64..."
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=linux -X main.buildArch=amd64" \
+		-o $(BINARY_NAME)-linux-amd64 $(CMD_DIR)
 
-build-darwin:
-	@echo "Building for macOS..."
-	@./scripts/build-with-config.sh --os darwin --arch amd64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+.PHONY: build-linux-arm64
+build-linux-arm64:
+	@echo "Building for Linux ARM64..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=linux -X main.buildArch=arm64" \
+		-o $(BINARY_NAME)-linux-arm64 $(CMD_DIR)
 
-build-darwin-arm:
-	@echo "Building for macOS ARM64..."
-	@./scripts/build-with-config.sh --os darwin --arch arm64 --type $(BUILD_TYPE) --version $(VERSION) --output-dir $(OUTPUT_DIR)
+# Windows builds
+.PHONY: build-windows
+build-windows: build-windows-amd64 build-windows-arm64
 
-# Run tests
+.PHONY: build-windows-amd64
+build-windows-amd64:
+	@echo "Building for Windows AMD64..."
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=windows -X main.buildArch=amd64" \
+		-o $(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
+
+.PHONY: build-windows-arm64
+build-windows-arm64:
+	@echo "Building for Windows ARM64..."
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=windows -X main.buildArch=arm64" \
+		-o $(BINARY_NAME)-windows-arm64.exe $(CMD_DIR)
+
+# macOS builds
+.PHONY: build-darwin
+build-darwin: build-darwin-amd64 build-darwin-arm64
+
+.PHONY: build-darwin-amd64
+build-darwin-amd64:
+	@echo "Building for macOS AMD64..."
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=darwin -X main.buildArch=amd64" \
+		-o $(BINARY_NAME)-darwin-amd64 $(CMD_DIR)
+
+.PHONY: build-darwin-arm64
+build-darwin-arm64:
+	@echo "Building for macOS ARM64 (Apple Silicon)..."
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=darwin -X main.buildArch=arm64" \
+		-o $(BINARY_NAME)-darwin-arm64 $(CMD_DIR)
+
+# Testing
+.PHONY: test
 test:
 	@echo "Running tests..."
-	go test -v ./...
+	go test -v ./pkg/... -tags=mock
 
-# Run tests with coverage
+.PHONY: test-coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	go test -v -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+	go test -v -cover ./pkg/... -tags=mock
 
-# Lint code
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests..."
+	go test -v ./pkg/... -tags=integration
+
+# Linting and formatting
+.PHONY: lint
 lint:
-	@echo "Running linter..."
-	golangci-lint run
+	@echo "Running linters..."
+	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found, skipping advanced linting"; \
+	fi
 
-# Format code
+.PHONY: fmt
 fmt:
 	@echo "Formatting code..."
 	go fmt ./...
 
-# Clean build artifacts
-clean:
-	@echo "Cleaning build artifacts..."
-	rm -rf $(OUTPUT_DIR)
-	rm -f cloudbridge-client
-	rm -f cloudbridge-client.exe
-	rm -f coverage.out
-	rm -f coverage.html
-	rm -f *.log
+.PHONY: fmt-check
+fmt-check:
+	@echo "Checking code formatting..."
+	@test -z "$$(gofmt -s -l . | grep -v vendor/)" || (echo "Code not formatted, run 'make fmt'" && exit 1)
 
-# Show version information
-version:
-	@echo "Version: $(VERSION)"
-	@echo "Build Type: $(BUILD_TYPE)"
-	@echo "Output Dir: $(OUTPUT_DIR)"
-	@echo "Go Version: $(shell go version)"
-	@echo "Go OS/Arch: $(shell go env GOOS)/$(shell go env GOARCH)"
-
-# Install dependencies
+# Dependencies
+.PHONY: deps
 deps:
-	@echo "Installing dependencies..."
+	@echo "Downloading dependencies..."
 	go mod download
 	go mod tidy
 
-# Install build tools
-install-tools:
-	@echo "Installing build tools..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+.PHONY: deps-update
+deps-update:
+	@echo "Updating dependencies..."
+	go get -u ./...
+	go mod tidy
 
-# Development build (with debug info)
-dev-build:
-	@echo "Building development version..."
-	go build -o cloudbridge-client ./cmd/cloudbridge-client
+# Setup scripts
+.PHONY: setup-linux
+setup-linux:
+	@echo "Setting up WireGuard for Linux..."
+	sudo ./scripts/setup-wg-linux.sh
 
-# Quick test build
-quick-test:
-	@echo "Quick test build..."
-	go build -o cloudbridge-client ./cmd/cloudbridge-client
-	@echo "Built: cloudbridge-client"
+.PHONY: setup-windows
+setup-windows:
+	@echo "Setting up WireGuard for Windows..."
+	@echo "Run this in Administrator PowerShell:"
+	@echo ".\scripts\setup-wg-windows.ps1"
 
-# Docker build (if needed)
-docker-build:
-	@echo "Building Docker image..."
-	docker build -t cloudbridge-client:$(VERSION) .
+# Clean up
+.PHONY: clean
+clean:
+	@echo "Cleaning up build artifacts..."
+	rm -f $(BINARY_NAME)
+	rm -f $(BINARY_NAME)-*
+	go clean
 
-# Release build (all platforms)
-release: clean
-	@echo "Building release for all platforms..."
-	@$(MAKE) build-all BUILD_TYPE=production VERSION=$(VERSION)
+# Install (current platform only)
+.PHONY: install
+install: build
+	@echo "Installing CloudBridge Client..."
+	@if [ "$(shell uname)" = "Linux" ] || [ "$(shell uname)" = "Darwin" ]; then \
+		sudo cp $(BINARY_NAME) /usr/local/bin/; \
+		echo "Installed to /usr/local/bin/$(BINARY_NAME)"; \
+	else \
+		echo "Manual installation required on this platform"; \
+	fi
 
-# CI build
-ci-build:
-	@echo "CI build..."
-	@$(MAKE) build-test VERSION=$(VERSION)
-	@$(MAKE) test
-	@$(MAKE) lint
+# Uninstall
+.PHONY: uninstall
+uninstall:
+	@echo "Uninstalling CloudBridge Client..."
+	@if [ "$(shell uname)" = "Linux" ] || [ "$(shell uname)" = "Darwin" ]; then \
+		sudo rm -f /usr/local/bin/$(BINARY_NAME); \
+		echo "Uninstalled from /usr/local/bin/$(BINARY_NAME)"; \
+	else \
+		echo "Manual uninstallation required on this platform"; \
+	fi
+
+# Examples
+.PHONY: examples
+examples:
+	@echo "Building examples..."
+	go build -tags example -o examples/simple-tunnel examples/simple-tunnel.go
+	go build -tags example -o examples/p2p-mesh examples/p2p-mesh.go
+	@echo "Examples built successfully"
+
+# Development helpers
+.PHONY: dev
+dev: deps fmt lint test build examples
+	@echo "Development build complete"
+
+.PHONY: release
+release: clean deps fmt lint test build-all
+	@echo "Release build complete"
+
+# Help
+.PHONY: help
+help:
+	@echo "CloudBridge Client Build System"
+	@echo "==============================="
+	@echo ""
+	@echo "Build targets:"
+	@echo "  build              Build for current platform"
+	@echo "  build-all          Build for all platforms"
+	@echo "  build-linux        Build for Linux (amd64 + arm64)"
+	@echo "  build-windows      Build for Windows (amd64 + arm64)"
+	@echo "  build-darwin       Build for macOS (amd64 + arm64)"
+	@echo ""
+	@echo "Testing:"
+	@echo "  test               Run unit tests"
+	@echo "  test-coverage      Run tests with coverage"
+	@echo "  test-integration   Run integration tests"
+	@echo ""
+	@echo "Code quality:"
+	@echo "  lint               Run linters"
+	@echo "  fmt                Format code"
+	@echo "  fmt-check          Check code formatting"
+	@echo ""
+	@echo "Examples:"
+	@echo "  examples           Build example applications"
+	@echo ""
+	@echo "Dependencies:"
+	@echo "  deps               Download dependencies"
+	@echo "  deps-update        Update dependencies"
+	@echo ""
+	@echo "Setup:"
+	@echo "  setup-linux        Setup WireGuard on Linux"
+	@echo "  setup-windows      Show Windows setup instructions"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  clean              Clean build artifacts"
+	@echo "  install            Install binary (Linux/macOS)"
+	@echo "  uninstall          Uninstall binary (Linux/macOS)"
+	@echo ""
+	@echo "Development:"
+	@echo "  dev                Full development build"
+	@echo "  release            Full release build"
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  VERSION            Version string (default: dev)"
+	@echo "  BUILD_TYPE         Build type (default: development)"

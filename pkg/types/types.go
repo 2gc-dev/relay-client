@@ -28,6 +28,10 @@ type Config struct {
 	ICE          ICEConfig          `mapstructure:"ice"`
 	QUIC         QUICConfig         `mapstructure:"quic"`
 	P2P          P2PConfig          `mapstructure:"p2p"`
+	TURN         TURNConfig         `mapstructure:"turn"`
+	DERP         DERPConfig         `mapstructure:"derp"`
+	WebSocket    WebSocketConfig    `mapstructure:"websocket"`
+	WireGuard    WireGuardConfig    `mapstructure:"wireguard"`
 }
 
 // RelayConfig contains relay server connection settings
@@ -47,6 +51,8 @@ type RelayPorts struct {
 	STUN         int `mapstructure:"stun"`
 	MASQUE       int `mapstructure:"masque"`
 	EnhancedQUIC int `mapstructure:"enhanced_quic"`
+	TURN         int `mapstructure:"turn"`
+	DERP         int `mapstructure:"derp"`
 }
 
 // TLSConfig contains TLS-specific settings
@@ -95,11 +101,21 @@ type LoggingConfig struct {
 
 // MetricsConfig contains metrics configuration
 type MetricsConfig struct {
-	Enabled           bool `mapstructure:"enabled"`
-	PrometheusPort    int  `mapstructure:"prometheus_port"`
-	TenantMetrics     bool `mapstructure:"tenant_metrics"`
-	BufferMetrics     bool `mapstructure:"buffer_metrics"`
-	ConnectionMetrics bool `mapstructure:"connection_metrics"`
+	Enabled           bool              `mapstructure:"enabled"`
+	PrometheusPort    int               `mapstructure:"prometheus_port"`
+	TenantMetrics     bool              `mapstructure:"tenant_metrics"`
+	BufferMetrics     bool              `mapstructure:"buffer_metrics"`
+	ConnectionMetrics bool              `mapstructure:"connection_metrics"`
+	Pushgateway       PushgatewayConfig `mapstructure:"pushgateway"`
+}
+
+// PushgatewayConfig contains Pushgateway configuration
+type PushgatewayConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	URL          string        `mapstructure:"push_url"`
+	JobName      string        `mapstructure:"job_name"`
+	Instance     string        `mapstructure:"instance"`
+	PushInterval time.Duration `mapstructure:"push_interval"`
 }
 
 // PerformanceConfig contains performance optimization settings
@@ -126,8 +142,11 @@ type APIConfig struct {
 type ICEConfig struct {
 	STUNServers        []string      `mapstructure:"stun_servers"`
 	TURNServers        []string      `mapstructure:"turn_servers"`
+	DERPServers        []string      `mapstructure:"derp_servers"`
 	Timeout            time.Duration `mapstructure:"timeout"`
 	MaxBindingRequests int           `mapstructure:"max_binding_requests"`
+	ConnectivityChecks bool          `mapstructure:"connectivity_checks"`
+	CandidateGathering bool          `mapstructure:"candidate_gathering"`
 }
 
 // QUICConfig contains QUIC connection configuration
@@ -138,15 +157,58 @@ type QUICConfig struct {
 	MaxStreamData      int           `mapstructure:"max_stream_data"`
 	KeepAlivePeriod    time.Duration `mapstructure:"keep_alive_period"`
 	InsecureSkipVerify bool          `mapstructure:"insecure_skip_verify"`
+	MASQUESupport      bool          `mapstructure:"masque_support"`
+	HTTPDatagrams      bool          `mapstructure:"http_datagrams"`
 }
 
 // P2PConfig contains P2P mesh configuration
 type P2PConfig struct {
-	MaxConnections         int           `mapstructure:"max_connections"`
-	SessionTimeout         time.Duration `mapstructure:"session_timeout"`
-	PeerDiscoveryInterval  time.Duration `mapstructure:"peer_discovery_interval"`
+	MaxConnections          int           `mapstructure:"max_connections"`
+	SessionTimeout          time.Duration `mapstructure:"session_timeout"`
+	PeerDiscoveryInterval   time.Duration `mapstructure:"peer_discovery_interval"`
 	ConnectionRetryInterval time.Duration `mapstructure:"connection_retry_interval"`
-	MaxRetryAttempts       int           `mapstructure:"max_retry_attempts"`
-	HeartbeatInterval      time.Duration `mapstructure:"heartbeat_interval"`
-	HeartbeatTimeout       time.Duration `mapstructure:"heartbeat_timeout"`
+	MaxRetryAttempts        int           `mapstructure:"max_retry_attempts"`
+	HeartbeatInterval       time.Duration `mapstructure:"heartbeat_interval"`
+	HeartbeatTimeout        time.Duration `mapstructure:"heartbeat_timeout"`
+	FallbackEnabled         bool          `mapstructure:"fallback_enabled"`
+	DERPFallback            bool          `mapstructure:"derp_fallback"`
+	WebSocketFallback       bool          `mapstructure:"websocket_fallback"`
+}
+
+// TURNConfig contains TURN server configuration
+type TURNConfig struct {
+	Enabled        bool          `mapstructure:"enabled"`
+	Servers        []string      `mapstructure:"servers"`
+	Username       string        `mapstructure:"username"`
+	Password       string        `mapstructure:"password"`
+	Realm          string        `mapstructure:"realm"`
+	Timeout        time.Duration `mapstructure:"timeout"`
+	MaxAllocations int           `mapstructure:"max_allocations"`
+}
+
+// DERPConfig contains DERP server configuration
+type DERPConfig struct {
+	Enabled          bool          `mapstructure:"enabled"`
+	Servers          []string      `mapstructure:"servers"`
+	Timeout          time.Duration `mapstructure:"timeout"`
+	MaxConnections   int           `mapstructure:"max_connections"`
+	FallbackPriority int           `mapstructure:"fallback_priority"`
+}
+
+// WebSocketConfig contains WebSocket tunneling configuration
+type WebSocketConfig struct {
+	Enabled              bool          `mapstructure:"enabled"`
+	Endpoint             string        `mapstructure:"endpoint"`
+	Timeout              time.Duration `mapstructure:"timeout"`
+	PingInterval         time.Duration `mapstructure:"ping_interval"`
+	MaxReconnectAttempts int           `mapstructure:"max_reconnect_attempts"`
+}
+
+// WireGuardConfig contains WireGuard VPN configuration
+type WireGuardConfig struct {
+	Enabled             bool          `mapstructure:"enabled"`
+	InterfaceName       string        `mapstructure:"interface_name"`
+	Port                int           `mapstructure:"port"`
+	MTU                 int           `mapstructure:"mtu"`
+	PersistentKeepAlive time.Duration `mapstructure:"persistent_keepalive"`
 }

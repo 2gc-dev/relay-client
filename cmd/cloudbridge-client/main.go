@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,25 +20,27 @@ import (
 	"github.com/2gc-dev/cloudbridge-client/pkg/relay"
 	"github.com/2gc-dev/cloudbridge-client/pkg/service"
 	"github.com/2gc-dev/cloudbridge-client/pkg/types"
+	"github.com/2gc-dev/cloudbridge-client/pkg/utils"
 	"github.com/spf13/cobra" // Required for CLI interface
 )
 
 // Build-time variables (set via ldflags)
 var (
-	version              string = "dev"
-	buildType            string = "unknown"
-	buildOS              string = "unknown"
-	buildArch            string = "unknown"
-	buildTime            string = "unknown"
-	jwtSecret            string = ""
-	jwtFallbackSecret    string = ""
-	buildApiBase         string = ""
-	buildTenantID        string = ""
+	version           string = "dev"
+	buildType         string = "unknown"
+	buildOS           string = "unknown"
+	buildArch         string = "unknown"
+	buildTime         string = "unknown"
+	jwtSecret         string = ""
+	jwtFallbackSecret string = ""
+	buildApiBase      string = ""
+	buildTenantID     string = ""
 )
 
 var (
 	configFile string
 	token      string
+	caPath     string
 	tunnelID   string
 	localPort  int
 	remoteHost string
@@ -45,12 +48,13 @@ var (
 	verbose    bool
 
 	// P2P Mesh specific flags
-	p2pMode    bool
-	peerID     string
+	p2pMode bool
+	peerID  string
 
 	// HTTP API specific flags
 	insecureSkipTLSVerify bool
-	logLevel             string
+	logLevel              string
+	transportMode         string
 )
 
 func main() {
@@ -77,6 +81,8 @@ func main() {
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Configuration file path")
 	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", "", "JWT token for authentication")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
+	// Custom CA path for TLS root trust
+	rootCmd.PersistentFlags().StringVar(&caPath, "ca", os.Getenv("CLOUDBRIDGE_CA"), "Path to custom Root CA PEM file (env CLOUDBRIDGE_CA)")
 
 	// Tunnel mode flags
 	rootCmd.Flags().StringVarP(&tunnelID, "tunnel-id", "i", "tunnel_001", "Tunnel ID")
@@ -91,6 +97,7 @@ func main() {
 	// HTTP API flags (URLs are hardcoded in the code)
 	rootCmd.PersistentFlags().BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification (dev only)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&transportMode, "transport", "grpc", "Transport mode (grpc, json)")
 
 	// Mark required flags
 	rootCmd.MarkFlagRequired("token")
@@ -127,11 +134,27 @@ func run(cmd *cobra.Command, args []string) error {
 	if logLevel != "" {
 		cfg.Logging.Level = logLevel
 	}
+	// Apply custom CA if provided
+	if caPath != "" {
+		cfg.Relay.TLS.CACert = caPath
+	}
 
 	// Create client
-	client, err := relay.NewClient(cfg)
+	client, err := relay.NewClient(cfg, configFile)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	// Validate CLI flags for incompatible modes
+	if err := validateFlags(cfg, transportMode); err != nil {
+		return fmt.Errorf("invalid flag combination: %w", err)
+	}
+
+	// Set transport mode if specified
+	if transportMode != "" {
+		if err := client.SetTransportMode(transportMode); err != nil {
+			return fmt.Errorf("failed to set transport mode: %w", err)
+		}
 	}
 	defer func() {
 		if err := client.Close(); err != nil {
@@ -542,7 +565,7 @@ func showVersion() {
 	fmt.Printf("Build Time:  %s\n", buildTime)
 	fmt.Printf("Go Version:  %s\n", runtime.Version())
 	fmt.Printf("Go OS/Arch:  %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	
+
 	if buildType != "production" {
 		fmt.Printf("\nBuild Configuration:\n")
 		if jwtSecret != "" {
@@ -582,6 +605,10 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	}
 	if logLevel != "" {
 		cfg.Logging.Level = logLevel
+	}
+	// Apply custom CA if provided
+	if caPath != "" {
+		cfg.Relay.TLS.CACert = caPath
 	}
 
 	// Generate peer ID if not provided
@@ -652,23 +679,23 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	// Create P2P manager with HTTP API support
 	p2pManager := p2p.NewManagerWithAPI(p2pConfig, apiConfig, authManager, token, p2pLogger)
 
-    // Start P2P mesh with retry to survive temporary relay outages
-    {
-        backoff := 1 * time.Second
-        maxBackoff := 30 * time.Second
-        for {
-            if err := p2pManager.Start(); err != nil {
-                log.Printf("Failed to start P2P mesh: %v, retrying in %v...", err, backoff)
-                time.Sleep(backoff)
-                backoff *= 2
-                if backoff > maxBackoff {
-                    backoff = maxBackoff
-                }
-                continue
-            }
-            break
-        }
-    }
+	// Start P2P mesh with retry to survive temporary relay outages
+	{
+		backoff := 1 * time.Second
+		maxBackoff := 30 * time.Second
+		for {
+			if err := p2pManager.Start(); err != nil {
+				log.Printf("Failed to start P2P mesh: %v, retrying in %v...", err, backoff)
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			break
+		}
+	}
 
 	defer func() {
 		if err := p2pManager.Stop(); err != nil {
@@ -704,7 +731,7 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create client
-	client, err := relay.NewClient(cfg)
+	client, err := relay.NewClient(cfg, configFile)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
@@ -760,6 +787,42 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 		log.Println("Received shutdown signal, closing...")
 	case <-ctx.Done():
 		log.Println("Context canceled, closing...")
+	}
+
+	return nil
+}
+
+// validateFlags validates CLI flags for incompatible combinations
+func validateFlags(cfg *types.Config, transportMode string) error {
+	// Check gRPC transport with TLS disabled
+	if transportMode == "grpc" && !cfg.Relay.TLS.Enabled {
+		return fmt.Errorf("gRPC transport requires TLS to be enabled (set relay.tls.enabled=true)")
+	}
+
+	// Check WireGuard requirements
+	if cfg.WireGuard.Enabled {
+		// Check if running with administrative privileges
+		if !utils.IsRunningAsAdmin() {
+			log.Print(utils.GetPrivilegeWarning())
+		}
+	}
+
+	// Check Pushgateway URL format
+	if cfg.Metrics.Pushgateway.Enabled {
+		if cfg.Metrics.Pushgateway.URL == "" {
+			return fmt.Errorf("pushgateway enabled but no URL specified")
+		}
+
+		// Basic URL validation
+		if !strings.HasPrefix(cfg.Metrics.Pushgateway.URL, "http://") &&
+			!strings.HasPrefix(cfg.Metrics.Pushgateway.URL, "https://") {
+			return fmt.Errorf("pushgateway URL must start with http:// or https://")
+		}
+	}
+
+	// Check token requirement
+	if token == "" && cfg.Auth.Secret == "" {
+		return fmt.Errorf("JWT token is required (use --token flag or set auth.secret in config)")
 	}
 
 	return nil

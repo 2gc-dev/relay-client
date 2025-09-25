@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -12,13 +15,13 @@ import (
 func main() {
 	// Минимальная конфигурация для тестирования
 	addr := "95.163.250.190:5553"
-	
+
 	// Простейшая TLS конфигурация
 	tlsConf := &tls.Config{
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"h3-27"},
 	}
-	
+
 	// Простейшая QUIC конфигурация
 	quicConf := &quic.Config{
 		HandshakeIdleTimeout: 60 * time.Second,
@@ -36,7 +39,7 @@ func main() {
 
 	log.Printf("🔌 Устанавливаем QUIC соединение...")
 	start := time.Now()
-	
+
 	conn, err := quic.DialAddr(ctx, addr, tlsConf, quicConf)
 	if err != nil {
 		log.Printf("❌ Ошибка подключения: %v", err)
@@ -50,7 +53,7 @@ func main() {
 	log.Printf("⏱️  Время handshake: %v", duration)
 	log.Printf("🌐 Локальный адрес: %s", conn.LocalAddr())
 	log.Printf("🌐 Удаленный адрес: %s", conn.RemoteAddr())
-	
+
 	// Проверяем TLS состояние
 	tlsState := conn.ConnectionState().TLS
 	log.Printf("🔐 TLS версия: %x", tlsState.Version)

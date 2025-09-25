@@ -16,10 +16,10 @@ import (
 
 // Client represents an HTTP API client for P2P mesh operations
 type Client struct {
-	baseURL           string
-	httpClient        *http.Client
+	baseURL            string
+	httpClient         *http.Client
 	insecureSkipVerify bool
-	logger            Logger
+	logger             Logger
 }
 
 // Logger interface for logging
@@ -63,28 +63,28 @@ type PeerStatusResponse struct {
 
 // Peer represents a discovered peer
 type Peer struct {
-	PeerID         string `json:"peer_id"`
-	RelaySessionID string `json:"relay_session_id"`
-	PublicKey      string `json:"public_key,omitempty"`
-    AllowedIPs     []string `json:"allowed_ips,omitempty"`
-    Endpoint       string   `json:"endpoint,omitempty"`
-    Keepalive      int      `json:"keepalive,omitempty"`
-    MTU            int      `json:"mtu,omitempty"`
-    IsOnline       bool     `json:"is_online,omitempty"`
-    LastSeen       string   `json:"last_seen,omitempty"`
-    QUICConfig      *QUICConfig      `json:"quic_config,omitempty"`
-    NetworkConfig   *NetworkConfig   `json:"network_config,omitempty"`
+	PeerID         string         `json:"peer_id"`
+	RelaySessionID string         `json:"relay_session_id"`
+	PublicKey      string         `json:"public_key,omitempty"`
+	AllowedIPs     []string       `json:"allowed_ips,omitempty"`
+	Endpoint       string         `json:"endpoint,omitempty"`
+	Keepalive      int            `json:"keepalive,omitempty"`
+	MTU            int            `json:"mtu,omitempty"`
+	IsOnline       bool           `json:"is_online,omitempty"`
+	LastSeen       string         `json:"last_seen,omitempty"`
+	QUICConfig     *QUICConfig    `json:"quic_config,omitempty"`
+	NetworkConfig  *NetworkConfig `json:"network_config,omitempty"`
 }
 
 // QUICConfig for discover payloads
 type QUICConfig struct {
-    PublicKey  string   `json:"public_key,omitempty"`
-    AllowedIPs []string `json:"allowed_ips,omitempty"`
+	PublicKey  string   `json:"public_key,omitempty"`
+	AllowedIPs []string `json:"allowed_ips,omitempty"`
 }
 
 // NetworkConfig for discover payloads
 type NetworkConfig struct {
-    MTU int `json:"mtu,omitempty"`
+	MTU int `json:"mtu,omitempty"`
 }
 
 // DiscoverResponse represents a peer discovery response
@@ -98,27 +98,27 @@ type DiscoverResponse struct {
 
 // ConnectionRequest represents an open/close connection request for relay monitoring
 type ConnectionRequest struct {
-    TenantID  string                 `json:"tenant_id"`
-    PeerID    string                 `json:"peer_id"`
-    SessionID string                 `json:"session_id"`
-    Protocol  string                 `json:"protocol"`
-    Meta      map[string]interface{} `json:"meta,omitempty"`
+	TenantID  string                 `json:"tenant_id"`
+	PeerID    string                 `json:"peer_id"`
+	SessionID string                 `json:"session_id"`
+	Protocol  string                 `json:"protocol"`
+	Meta      map[string]interface{} `json:"meta,omitempty"`
 }
 
 // HeartbeatRequest represents a heartbeat for an open logical connection
 type HeartbeatRequest struct {
-    Status         string `json:"status"`
-    RelaySessionID string `json:"relay_session_id"`
+	Status         string `json:"status"`
+	RelaySessionID string `json:"relay_session_id"`
 }
 
 // HeartbeatResponse represents a heartbeat response
 type HeartbeatResponse struct {
-    Success  bool   `json:"success"`
-    PeerID   string `json:"peer_id"`
-    Status   string `json:"status"`
-    LastSeen string `json:"last_seen"`
-    Error    string `json:"error,omitempty"`
-    Code     int    `json:"code,omitempty"`
+	Success  bool   `json:"success"`
+	PeerID   string `json:"peer_id"`
+	Status   string `json:"status"`
+	LastSeen string `json:"last_seen"`
+	Error    string `json:"error,omitempty"`
+	Code     int    `json:"code,omitempty"`
 }
 
 // ClientConfig represents the API client configuration
@@ -155,7 +155,7 @@ func NewClient(cfg *ClientConfig, logger Logger) *Client {
 // RegisterPeer registers a peer without endpoint
 func (c *Client) RegisterPeer(ctx context.Context, tenantID, token string, req *PeerRegistrationRequest) (*PeerRegistrationResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/register", c.baseURL, tenantID)
-	
+
 	resp, err := c.doRequestWithRetry(ctx, "POST", url, token, req, &PeerRegistrationResponse{})
 	if err != nil {
 		return nil, err
@@ -166,7 +166,7 @@ func (c *Client) RegisterPeer(ctx context.Context, tenantID, token string, req *
 // UpdatePeerStatus updates peer status with heartbeat
 func (c *Client) UpdatePeerStatus(ctx context.Context, tenantID, peerID, token string, req *PeerStatusRequest) (*PeerStatusResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/%s/status", c.baseURL, tenantID, peerID)
-	
+
 	resp, err := c.doRequestWithRetry(ctx, "PUT", url, token, req, &PeerStatusResponse{})
 	if err != nil {
 		return nil, err
@@ -177,7 +177,7 @@ func (c *Client) UpdatePeerStatus(ctx context.Context, tenantID, peerID, token s
 // DiscoverPeers discovers peers in the tenant
 func (c *Client) DiscoverPeers(ctx context.Context, tenantID, token string) (*DiscoverResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/discover", c.baseURL, tenantID)
-	
+
 	resp, err := c.doRequestWithRetry(ctx, "GET", url, token, nil, &DiscoverResponse{})
 	if err != nil {
 		return nil, err
@@ -187,23 +187,23 @@ func (c *Client) DiscoverPeers(ctx context.Context, tenantID, token string) (*Di
 
 // OpenConnection notifies relay about an opened logical connection (increments gauge)
 func (c *Client) OpenConnection(ctx context.Context, token string, req *ConnectionRequest) error {
-    url := fmt.Sprintf("%s/api/v1/relay/connections/open", c.baseURL)
-    _, err := c.doRequestWithRetry(ctx, "POST", url, token, req, nil)
-    return err
+	url := fmt.Sprintf("%s/api/v1/relay/connections/open", c.baseURL)
+	_, err := c.doRequestWithRetry(ctx, "POST", url, token, req, nil)
+	return err
 }
 
 // CloseConnection notifies relay about a closed logical connection (decrements gauge)
 func (c *Client) CloseConnection(ctx context.Context, token string, req *ConnectionRequest) error {
-    url := fmt.Sprintf("%s/api/v1/relay/connections/close", c.baseURL)
-    _, err := c.doRequestWithRetry(ctx, "POST", url, token, req, nil)
-    return err
+	url := fmt.Sprintf("%s/api/v1/relay/connections/close", c.baseURL)
+	_, err := c.doRequestWithRetry(ctx, "POST", url, token, req, nil)
+	return err
 }
 
 // HeartbeatConnection sends a heartbeat for an open logical connection
 func (c *Client) HeartbeatConnection(ctx context.Context, token string, req *HeartbeatRequest) error {
-    url := fmt.Sprintf("%s/api/v1/relay/connections/heartbeat", c.baseURL)
-    _, err := c.doRequestWithRetry(ctx, "POST", url, token, req, nil)
-    return err
+	url := fmt.Sprintf("%s/api/v1/relay/connections/heartbeat", c.baseURL)
+	_, err := c.doRequestWithRetry(ctx, "POST", url, token, req, nil)
+	return err
 }
 
 // doRequestWithRetry performs HTTP request with retry logic
@@ -211,36 +211,36 @@ func (c *Client) doRequestWithRetry(ctx context.Context, method, url, token stri
 	var lastErr error
 	backoff := 1 * time.Second
 	maxBackoff := 30 * time.Second
-	
+
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			// Add jitter to backoff
 			jitter := time.Duration(rand.Float64() * float64(backoff) * 0.1)
 			sleepTime := backoff + jitter
-			
+
 			c.logger.Debug("Retrying request", "attempt", attempt, "sleep", sleepTime)
-			
+
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(sleepTime):
 			}
-			
+
 			backoff = time.Duration(float64(backoff) * 1.5)
 			if backoff > maxBackoff {
 				backoff = maxBackoff
 			}
 		}
-		
+
 		resp, err := c.doRequest(ctx, method, url, token, reqBody, respBody)
 		if err == nil {
 			return resp, nil
 		}
-		
+
 		lastErr = err
 		c.logger.Warn("Request failed, will retry", "attempt", attempt+1, "error", err)
 	}
-	
+
 	return nil, fmt.Errorf("request failed after retries: %w", lastErr)
 }
 
@@ -254,33 +254,33 @@ func (c *Client) doRequest(ctx context.Context, method, url, token string, reqBo
 		}
 		body = bytes.NewReader(jsonData)
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// Set headers
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	
+
 	c.logger.Debug("Making HTTP request", "method", method, "url", url)
-	
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	c.logger.Debug("Received response", "status", resp.StatusCode, "body_length", len(respData))
-	
+
 	// Check for HTTP errors
 	if resp.StatusCode >= 400 {
 		var errorResp struct {
@@ -288,14 +288,14 @@ func (c *Client) doRequest(ctx context.Context, method, url, token string, reqBo
 			Code    int    `json:"code"`
 			Message string `json:"message"`
 		}
-		
+
 		if err := json.Unmarshal(respData, &errorResp); err == nil {
 			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorResp.Error)
 		}
-		
+
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respData))
 	}
-	
+
 	// Parse successful response
 	if respBody != nil {
 		if err := json.Unmarshal(respData, respBody); err != nil {
@@ -303,7 +303,7 @@ func (c *Client) doRequest(ctx context.Context, method, url, token string, reqBo
 		}
 		return respBody, nil
 	}
-	
+
 	return nil, nil
 }
 
@@ -323,7 +323,7 @@ func ParseHeartbeatInterval(interval interface{}) time.Duration {
 	case float64:
 		return time.Duration(v) * time.Second
 	}
-	
+
 	// Default to 30 seconds
 	return 30 * time.Second
 }
@@ -341,8 +341,8 @@ type ICECandidate struct {
 
 // ICESignalingRequest represents an ICE signaling request
 type ICESignalingRequest struct {
-	SessionID  string        `json:"session_id"`
-	PeerID     string        `json:"peer_id"`
+	SessionID  string          `json:"session_id"`
+	PeerID     string          `json:"peer_id"`
 	Candidates []*ICECandidate `json:"candidates"`
 }
 
@@ -360,16 +360,16 @@ type ICECandidateRequest struct {
 
 // ICECandidateResponse represents a response with remote ICE candidates
 type ICECandidateResponse struct {
-	Success    bool           `json:"success"`
+	Success    bool            `json:"success"`
 	Candidates []*ICECandidate `json:"candidates"`
-	Error      string         `json:"error,omitempty"`
+	Error      string          `json:"error,omitempty"`
 }
 
 // P2PConnectionRequest represents a P2P connection request
 type P2PConnectionRequest struct {
-	SessionID     string `json:"session_id"`
-	TargetPeerID  string `json:"target_peer_id"`
-	Protocol      string `json:"protocol"`
+	SessionID    string `json:"session_id"`
+	TargetPeerID string `json:"target_peer_id"`
+	Protocol     string `json:"protocol"`
 }
 
 // P2PConnectionResponse represents a P2P connection response
@@ -381,39 +381,39 @@ type P2PConnectionResponse struct {
 // SendHeartbeat sends a heartbeat to maintain peer connection
 func (c *Client) SendHeartbeat(ctx context.Context, tenantID, peerID, token string, req *HeartbeatRequest) (*HeartbeatResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/%s/heartbeat", c.baseURL, tenantID, peerID)
-	
+
 	jsonData, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal heartbeat request: %w", err)
 	}
-	
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create heartbeat request: %w", err)
 	}
-	
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
-	
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send heartbeat request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read heartbeat response: %w", err)
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("heartbeat request failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	var heartbeatResp HeartbeatResponse
 	if err := json.Unmarshal(body, &heartbeatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal heartbeat response: %w", err)
 	}
-	
+
 	return &heartbeatResp, nil
 }

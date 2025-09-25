@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -13,7 +16,7 @@ func main() {
 
 	// Создаем claims с правильными данными
 	claims := jwt.MapClaims{
-		"protocol_type":    "p2p-mesh",
+		"protocol_type":   "p2p-mesh",
 		"scope":           "p2p-mesh-claims",
 		"org_id":          "tenant-216420165",
 		"tenant_id":       "tenant-216420165",
@@ -72,7 +75,3 @@ func main() {
 	fmt.Println("Token expires in 24 hours")
 	fmt.Println("Use this token for testing with the updated API")
 }
-
-
-
-
