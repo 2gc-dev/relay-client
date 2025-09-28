@@ -1,6 +1,6 @@
 version: 2
 
-project_name: relay-client
+project_name: cloudbridge-client
 
 before:
   hooks:
@@ -54,6 +54,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X main.version={{.Version}}
+      - -X main.buildTime={{.Date}}
+      - -X main.buildType=release
 
 archives:
   - id: default

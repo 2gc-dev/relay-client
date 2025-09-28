@@ -14,12 +14,10 @@ env:
   GO_VERSION: '1.25'
 
 jobs:
-  lint_test_secure:
-    name: Lint, Test, Security
+  # Stage 1: Code Quality Checks (parallel)
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,76 +29,90 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go
+      - name: Cache Go modules
         uses: actions/cache@v4
         with:
           path: |
-            ${{ runner.tool_cache }}/go
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
       - name: Download dependencies
         run: go mod download
 
-      - name: Debug go.mod before tidy
-        run: |
-          echo "=== go.mod before tidy ==="
-          cat go.mod
-          echo "=== go.sum before tidy ==="
-          head -20 go.sum
-          echo "=== Checking cobra usage ==="
-          grep -r "cobra" cmd/ || echo "No cobra found in cmd/"
-          echo "=== Go version ==="
-          go version
-          echo "=== Go env ==="
-          go env GOMOD GOWORK
-
       - name: Verify go.mod tidy
         run: |
           go mod tidy
-          echo "=== go.mod after tidy ==="
-          cat go.mod
-          echo "=== Checking for changes ==="
           git diff --exit-code -- go.mod go.sum
 
-      - name: go vet
+      - name: Run go vet
         run: go vet ./...
 
-      - name: Install golangci-lint
+      - name: Install and run golangci-lint
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-          echo "=== golangci-lint version ==="
-          golangci-lint version
-          echo "=== golangci-lint config ==="
-          cat .golangci.yml || echo "No .golangci.yml found"
-          echo "=== Running golangci-lint locally ==="
-          golangci-lint run --verbose || echo "golangci-lint failed locally"
+          golangci-lint run --timeout=10m
 
-      - name: Run golangci-lint
-        run: |
-          echo "=== Running golangci-lint in CI ==="
-          golangci-lint run --verbose --timeout=10m
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Tests (race + coverage)
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ github.sha }}
+          name: coverage-report
           path: coverage.out
 
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Run govulncheck
         run: |
-          "$(go env GOPATH)/bin/govulncheck" ./... || true
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... || echo "Vulnerabilities found but continuing"
 
-      - name: Gosec (SARIF)
+      - name: Run gosec
         uses: securego/gosec@v2.22.0
         continue-on-error: true
         with:
@@ -112,10 +124,11 @@ jobs:
         with:
           sarif_file: gosec.sarif
 
-  snapshot_build:
-    name: Snapshot build (GoReleaser)
-    needs: lint_test_secure
+  # Stage 2: Build (depends on quality checks)
+  build:
+    name: Build & Package
     runs-on: ubuntu-latest
+    needs: [lint, test, security]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -135,11 +148,80 @@ jobs:
       - name: Build snapshot (no publish)
         run: goreleaser release --snapshot --clean --skip=publish
 
-      - name: Upload snapshot artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: snapshot-${{ github.sha }}
+          name: build-artifacts-${{ github.sha }}
           path: |
-            dist/*.zip
-            dist/*.tar.gz
+            dist/cloudbridge-client_*
             dist/checksums.txt
+          retention-days: 30
+
+  # Stage 3: Integration Tests (depends on build)
+  integration-test:
+    name: Integration Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-${{ github.sha }}
+          path: dist/
+
+      - name: Find and test binary (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Find the Linux AMD64 binary
+          BINARY=$(find dist/ -name "*linux_amd64*" -name "cloudbridge-client" | head -1)
+          echo "Testing binary: $BINARY"
+          chmod +x "$BINARY"
+          "$BINARY" version
+          "$BINARY" --help
+
+      - name: Find and test binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Find the Windows AMD64 binary
+          $Binary = Get-ChildItem -Path "dist\" -Recurse -Name "cloudbridge-client.exe" | Where-Object { $_ -match "windows_amd64" } | Select-Object -First 1
+          $FullPath = Join-Path "dist" $Binary
+          Write-Host "Testing binary: $FullPath"
+          & $FullPath version
+          & $FullPath --help
+
+      - name: Install WireGuard (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools
+          wg --version
+
+      - name: Test WireGuard (Linux)  
+        if: runner.os == 'Linux'
+        run: |
+          echo "WireGuard tools available:"
+          which wg
+          which ip
+
+      - name: Test WireGuard (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          try {
+            # Download WireGuard installer
+            Invoke-WebRequest -Uri "https://download.wireguard.com/windows-client/wireguard-installer.exe" -OutFile "wireguard-installer.exe"
+            Start-Process -FilePath "wireguard-installer.exe" -ArgumentList "/S" -Wait
+            $wgPath = "C:\Program Files\WireGuard\wg.exe"
+            if (Test-Path $wgPath) {
+              & $wgPath --version
+              Write-Host "WireGuard available"
+            }
+          } catch {
+            Write-Host "WireGuard test skipped: $_"
+          }
