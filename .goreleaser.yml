@@ -77,6 +77,13 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-SNAPSHOT-{{ .ShortCommit }}"
 
+git:
+  # Ensure we're building from the right tag
+  ignore_tags:
+    - "*-rc*"
+    - "*-alpha*"
+    - "*-beta*"
+
 changelog:
   sort: asc
   filters:
