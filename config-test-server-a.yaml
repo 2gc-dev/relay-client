@@ -1,0 +1,68 @@
+# CloudBridge Relay Client - Test Configuration (Server A)
+# Тестовая конфигурация для сервера А
+
+# Relay Configuration
+relay:
+  host: "edge.2gc.ru"
+  port: 8081
+  base_url: "http://edge.2gc.ru:8081"
+  timeout: "30s"
+  tls:
+    enabled: false
+    verify_cert: false
+    insecure_skip_verify: true
+
+# Authentication Configuration
+auth:
+  type: "jwt"
+  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZXJ2ZXItYSIsImlzcyI6ImNsb3VkYnJpZGdlLXJlbGF5IiwiYXVkIjoiY2xvdWRicmlkZ2UtcmVsYXkiLCJpYXQiOjE3NTkwODQ4NjgsImV4cCI6MTc2MDI5NDQ2OCwidGVuYW50X2lkIjoibWVzaC1uZXR3b3JrLXRlc3QiLCJzZXJ2ZXJfaWQiOiJzZXJ2ZXItYSIsInByb3RvY29sIjoicDJwLW1lc2giLCJjb25uZWN0aW9uX3R5cGUiOiJxdWljIiwicGVybWlzc2lvbnMiOlsicmVsYXlfY29ubmVjdCIsInJlbGF5X3R1bm5lbCJdLCJzY29wZXMiOlsicmVsYXlfcDJwIl19.fohpUrOjdPFPWIX4wJWuavHGqLGoXSUnfkET8jSQ6ic"
+  secret: "85Sk/NfLq3gqzCXzmBKbJCpL+f5BssXz3G8dVi3sPiE="
+  skip_validation: true
+
+# P2P Configuration
+p2p:
+  server_id: "server-a"
+  tenant_id: "mesh-network-test"
+  max_connections: 100
+  session_timeout: "300s"
+  peer_discovery_interval: "10s"
+  connection_retry_interval: "5s"
+  max_retry_attempts: 5
+  fallback_enabled: true
+  auto_relay: true
+
+# ICE Configuration
+ice:
+  stun_servers:
+    - "edge.2gc.ru:30302"
+    - "stun.l.google.com:19302"
+  timeout: "30s"
+  connectivity_checks: true
+
+# QUIC Configuration
+quic:
+  handshake_timeout: "10s"
+  idle_timeout: "60s"
+  keep_alive_period: "15s"
+  insecure_skip_verify: true
+
+# API Configuration
+api:
+  base_url: "http://edge.2gc.ru:8081"
+  p2p_api_url: "http://edge.2gc.ru:8081/api/v1/peers"
+  heartbeat_url: "http://edge.2gc.ru:8081/api/v1/heartbeat"
+  health_url: "http://edge.2gc.ru:8081/health"
+  timeout: "30s"
+  max_retries: 3
+  insecure_skip_verify: true
+
+# Logging Configuration
+logging:
+  level: "debug"
+  format: "text"
+  output: "stdout"
+
+# Metrics Configuration
+metrics:
+  enabled: true
+  prometheus_port: 9091

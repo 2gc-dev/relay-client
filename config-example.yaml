@@ -5,7 +5,7 @@
 relay:
   host: "your-relay-server.com"  # Адрес вашего relay сервера
   port: 8081                     # Порт relay сервера
-  base_url: "https://your-relay-server.com:8081"
+  base_url: "http://your-relay-server.com:8081"
   timeout: "30s"
   tls:
     enabled: true                # Включить HTTPS
@@ -99,12 +99,13 @@ heartbeat:
 
 # API Configuration
 api:
-  base_url: "https://your-relay-server.com:8081"
-  p2p_api_url: "https://your-relay-server.com:8081/api/v1/p2p"
-  heartbeat_url: "https://your-relay-server.com:8081/api/v1/heartbeat"
-  health_url: "https://your-relay-server.com:8081/health"
-  metrics_url: "https://your-relay-server.com:8081/metrics"
+  base_url: "http://your-relay-server.com:8081"
+  p2p_api_url: "http://your-relay-server.com:8081/api/v1/p2p"
+  heartbeat_url: "http://your-relay-server.com:8081/api/v1/heartbeat"
+  health_url: "http://your-relay-server.com:8081/health"
+  metrics_url: "http://your-relay-server.com:8081/metrics"
   timeout: "30s"
   max_retries: 3
   backoff_multiplier: 2.0
   max_backoff: "60s"
+

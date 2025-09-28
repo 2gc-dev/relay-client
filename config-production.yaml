@@ -5,12 +5,12 @@
 relay:
   host: "edge.2gc.ru"         # Production relay сервер
   port: 8081                  # Production порт (настроен в nginx)
-  base_url: "https://edge.2gc.ru:8081"
+  base_url: "http://edge.2gc.ru:8081"
   timeout: "30s"
   tls:
-    enabled: true             # HTTPS для production
-    verify_cert: true
-    insecure_skip_verify: false
+    enabled: false            # HTTP для текущей конфигурации
+    verify_cert: false
+    insecure_skip_verify: true
     server_name: "edge.2gc.ru"
 
 # Authentication Configuration - Production
@@ -65,7 +65,7 @@ quic:
 # WebSocket Configuration (fallback)
 websocket:
   enabled: true
-  endpoint: "wss://edge.2gc.ru:8081/ws/peers"
+  endpoint: "ws://edge.2gc.ru:8081/ws/peers"
   timeout: "30s"
   ping_interval: "10s"
   max_reconnect_attempts: 10
@@ -102,16 +102,16 @@ heartbeat:
 
 # API Configuration - Production
 api:
-  base_url: "https://edge.2gc.ru:8081"
-  p2p_api_url: "https://edge.2gc.ru:8081/api/v1/p2p"
-  heartbeat_url: "https://edge.2gc.ru:8081/api/v1/heartbeat"
-  health_url: "https://edge.2gc.ru:8081/health"
-  metrics_url: "https://edge.2gc.ru:8081/metrics"
+  base_url: "http://edge.2gc.ru:8081"
+  p2p_api_url: "http://edge.2gc.ru:8081/api/v1/p2p"
+  heartbeat_url: "http://edge.2gc.ru:8081/api/v1/heartbeat"
+  health_url: "http://edge.2gc.ru:8081/health"
+  metrics_url: "http://edge.2gc.ru:8081/metrics"
   timeout: "30s"
   max_retries: 3
   backoff_multiplier: 2.0
   max_backoff: "60s"
-  insecure_skip_verify: false
+  insecure_skip_verify: true
 
 # Security Configuration
 security:

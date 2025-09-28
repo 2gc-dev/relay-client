@@ -4,7 +4,7 @@
 relay:
   host: "edge.2gc.ru"         # Production relay сервер
   port: 8081                  # Production порт
-  base_url: "https://edge.2gc.ru:8081"  # Base URL for all API calls
+  base_url: "http://edge.2gc.ru:8081"  # Base URL for all API calls
   timeout: "30s"
   tls:
     enabled: true               # Включаем HTTPS для production
@@ -144,11 +144,11 @@ wireguard:
 
 # API Configuration - Production edge.2gc.ru
 api:
-  base_url: "https://edge.2gc.ru:8081"           # Production API endpoint
-  p2p_api_url: "https://edge.2gc.ru:8081/api/v1/p2p"   # P2P API endpoint
-  heartbeat_url: "https://edge.2gc.ru:8081/api/v1/heartbeat" # Heartbeat API endpoint
-  health_url: "https://edge.2gc.ru:8081/health"  # Health check endpoint
-  metrics_url: "https://edge.2gc.ru:8081/metrics" # Metrics endpoint
+  base_url: "http://edge.2gc.ru:8081"           # Production API endpoint
+  p2p_api_url: "http://edge.2gc.ru:8081/api/v1/p2p"   # P2P API endpoint
+  heartbeat_url: "http://edge.2gc.ru:8081/api/v1/heartbeat" # Heartbeat API endpoint
+  health_url: "http://edge.2gc.ru:8081/health"  # Health check endpoint
+  metrics_url: "http://edge.2gc.ru:8081/metrics" # Metrics endpoint
   insecure_skip_verify: false            # Проверяем сертификаты в production
   timeout: "30s"
   max_retries: 3
