@@ -96,5 +96,26 @@ changelog:
       - Merge branch
 
 release:
-  draft: true
-  replace_existing_draft: true
+  draft: false
+  replace_existing_draft: false
+  make_latest: true
+  name_template: "{{.ProjectName}} {{.Version}}"
+  header: |
+    ## 🚀 CloudBridge Client {{.Version}}
+    
+    This release includes both the main CloudBridge Client and the QUIC Tester utility.
+    
+    ### 📦 Binaries Included:
+    - **cloudbridge-client**: Main P2P mesh networking client
+    - **quic-tester**: QUIC protocol testing utility
+    
+    ### 🏗️ Supported Platforms:
+    - Linux (amd64, arm64, 386)  
+    - Windows (amd64, arm64, 386)
+    - macOS (amd64, arm64)
+    
+    ### 📋 Installation:
+    1. Download the appropriate archive for your platform
+    2. Extract the binaries
+    3. Copy `config-example.yaml` to `config.yaml` and configure
+    4. Run `./cloudbridge-client --help` for usage instructions
