@@ -185,21 +185,27 @@ func (a *ICEAgent) GetConnectionState() ice.ConnectionState {
 // setupEventHandlers sets up ICE agent event handlers
 func (a *ICEAgent) setupEventHandlers() {
 	// On candidate gathering state change
-	a.agent.OnCandidate(func(candidate ice.Candidate) {
+	if err := a.agent.OnCandidate(func(candidate ice.Candidate) {
 		a.logger.Debug("New candidate gathered", "candidate", candidate.String())
-	})
+	}); err != nil {
+		a.logger.Error("Failed to set candidate handler", "error", err)
+	}
 
 	// On connection state change
-	a.agent.OnConnectionStateChange(func(state ice.ConnectionState) {
+	if err := a.agent.OnConnectionStateChange(func(state ice.ConnectionState) {
 		a.logger.Info("ICE connection state changed", "state", state.String())
-	})
+	}); err != nil {
+		a.logger.Error("Failed to set connection state handler", "error", err)
+	}
 
 	// On selected candidate pair change
-	a.agent.OnSelectedCandidatePairChange(func(local, remote ice.Candidate) {
+	if err := a.agent.OnSelectedCandidatePairChange(func(local, remote ice.Candidate) {
 		a.logger.Info("Selected candidate pair changed",
 			"local", local.String(),
 			"remote", remote.String())
-	})
+	}); err != nil {
+		a.logger.Error("Failed to set candidate pair handler", "error", err)
+	}
 }
 
 // ValidateSTUNServer validates a STUN server
@@ -220,7 +226,9 @@ func ValidateSTUNServer(server string) error {
 
 	// Read response
 	response := make([]byte, 1024)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return fmt.Errorf("failed to set read deadline: %w", err)
+	}
 	n, err := conn.Read(response)
 	if err != nil {
 		return fmt.Errorf("failed to read STUN response: %w", err)
@@ -257,7 +265,9 @@ func GetPublicIP(stunServer string) (net.IP, error) {
 
 	// Read response
 	response := make([]byte, 1024)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, fmt.Errorf("failed to set read deadline: %w", err)
+	}
 	n, err := conn.Read(response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read STUN response: %w", err)

@@ -75,7 +75,7 @@ func (ta *TransportAdapter) Hello(version string, features []string) error {
 }
 
 // Authenticate performs authentication
-func (ta *TransportAdapter) Authenticate(token string) (string, string, error) {
+func (ta *TransportAdapter) Authenticate(token string) (clientID, tenantID string, err error) {
 	result, err := ta.transportManager.Authenticate(token)
 	if err != nil {
 		return "", "", err

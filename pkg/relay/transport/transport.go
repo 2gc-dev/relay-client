@@ -262,7 +262,8 @@ func (tm *TransportManager) Authenticate(token string) (*AuthResult, error) {
 }
 
 // CreateTunnel creates a tunnel using current transport
-func (tm *TransportManager) CreateTunnel(tunnelID, tenantID string, localPort int, remoteHost string, remotePort int) (*TunnelResult, error) {
+func (tm *TransportManager) CreateTunnel(tunnelID, tenantID string, localPort int,
+	remoteHost string, remotePort int) (*TunnelResult, error) {
 	transport := tm.GetTransport()
 	if transport == nil {
 		return nil, fmt.Errorf("no transport available")

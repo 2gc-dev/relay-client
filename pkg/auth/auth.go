@@ -273,7 +273,7 @@ func (am *AuthManager) validateJWTToken(tokenString string) (*jwt.Token, error) 
 	{
 		// Parse header to inspect kid without verifying signature
 		parser := jwt.Parser{}
-		if unverifiedToken, _, _ := parser.ParseUnverified(tokenString, jwt.MapClaims{}); unverifiedToken != nil {
+		if unverifiedToken, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{}); err == nil && unverifiedToken != nil {
 			if kid, ok := unverifiedToken.Header["kid"].(string); ok && kid == "fallback-key" && am.config.FallbackSecret != "" {
 				addSecretCandidates(am.config.FallbackSecret)
 			}

@@ -65,14 +65,18 @@ func (wgm *WireGuardManager) Connect() error {
 	// Configure interface
 	if err := wgm.configureInterface(); err != nil {
 		// Clean up on failure
-		wgm.destroyInterface()
+		if cleanupErr := wgm.destroyInterface(); cleanupErr != nil {
+			wgm.logger.Error("Failed to cleanup interface after configuration failure", "error", cleanupErr)
+		}
 		return fmt.Errorf("failed to configure WireGuard interface: %w", err)
 	}
 
 	// Bring interface up
 	if err := wgm.bringInterfaceUp(); err != nil {
 		// Clean up on failure
-		wgm.destroyInterface()
+		if cleanupErr := wgm.destroyInterface(); cleanupErr != nil {
+			wgm.logger.Error("Failed to cleanup interface after bringup failure", "error", cleanupErr)
+		}
 		return fmt.Errorf("failed to bring WireGuard interface up: %w", err)
 	}
 

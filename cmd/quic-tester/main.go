@@ -94,9 +94,12 @@ func main() {
 	defer cancel()
 	conn, err := quic.DialAddr(ctx, addr, tlsConf, quicConf)
 	if err != nil {
-		log.Fatalf("dial failed: %v", err)
+		log.Printf("dial failed: %v", err)
+		return
 	}
-	defer conn.CloseWithError(0, "bye")
+	defer func() {
+		_ = conn.CloseWithError(0, "bye") // Ignore error in cleanup
+	}()
 	hsDur := time.Since(hsStart)
 	tlsState := conn.ConnectionState().TLS
 	alpn := tlsState.NegotiatedProtocol
@@ -176,7 +179,11 @@ func main() {
 		if rs, err := conn.AcceptStream(rctx); err == nil {
 			log.Printf("✅ Received response stream")
 			br := bufio.NewReader(rs)
-			data, _ := io.ReadAll(br)
+			data, err := io.ReadAll(br)
+			if err != nil {
+				log.Printf("❌ Failed to read response: %v", err)
+				return
+			}
 			log.Printf("📥 Response %d bytes: %s", len(data), sanitize(string(data)))
 			rs.Close()
 		} else {

@@ -153,25 +153,33 @@ func NewClient(cfg *ClientConfig, logger Logger) *Client {
 }
 
 // RegisterPeer registers a peer without endpoint
-func (c *Client) RegisterPeer(ctx context.Context, tenantID, token string, req *PeerRegistrationRequest) (*PeerRegistrationResponse, error) {
+func (c *Client) RegisterPeer(ctx context.Context, tenantID, token string,
+	req *PeerRegistrationRequest) (*PeerRegistrationResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/register", c.baseURL, tenantID)
 
 	resp, err := c.doRequestWithRetry(ctx, "POST", url, token, req, &PeerRegistrationResponse{})
 	if err != nil {
 		return nil, err
 	}
-	return resp.(*PeerRegistrationResponse), nil
+	if result, ok := resp.(*PeerRegistrationResponse); ok {
+		return result, nil
+	}
+	return nil, fmt.Errorf("unexpected response type")
 }
 
 // UpdatePeerStatus updates peer status with heartbeat
-func (c *Client) UpdatePeerStatus(ctx context.Context, tenantID, peerID, token string, req *PeerStatusRequest) (*PeerStatusResponse, error) {
+func (c *Client) UpdatePeerStatus(ctx context.Context, tenantID, peerID, token string,
+	req *PeerStatusRequest) (*PeerStatusResponse, error) {
 	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/%s/status", c.baseURL, tenantID, peerID)
 
 	resp, err := c.doRequestWithRetry(ctx, "PUT", url, token, req, &PeerStatusResponse{})
 	if err != nil {
 		return nil, err
 	}
-	return resp.(*PeerStatusResponse), nil
+	if result, ok := resp.(*PeerStatusResponse); ok {
+		return result, nil
+	}
+	return nil, fmt.Errorf("unexpected response type")
 }
 
 // DiscoverPeers discovers peers in the tenant
@@ -182,7 +190,10 @@ func (c *Client) DiscoverPeers(ctx context.Context, tenantID, token string) (*Di
 	if err != nil {
 		return nil, err
 	}
-	return resp.(*DiscoverResponse), nil
+	if result, ok := resp.(*DiscoverResponse); ok {
+		return result, nil
+	}
+	return nil, fmt.Errorf("unexpected response type")
 }
 
 // OpenConnection notifies relay about an opened logical connection (increments gauge)

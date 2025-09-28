@@ -32,7 +32,7 @@ var (
 	buildArch     string = "unknown"
 	buildTime     string = "unknown"
 	jwtSecret     string = ""
-	buildApiBase  string = ""
+	buildAPIBase  string = ""
 	buildTenantID string = ""
 )
 
@@ -63,8 +63,9 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "cloudbridge-client",
 		Short: "CloudBridge Relay Client",
-		Long:  "A cross-platform client for CloudBridge Relay with TLS 1.3 support, JWT authentication, and QUIC + ICE/STUN/TURN P2P mesh networking",
-		RunE:  run,
+		Long: "A cross-platform client for CloudBridge Relay with TLS 1.3 support, " +
+			"JWT authentication, and QUIC + ICE/STUN/TURN P2P mesh networking",
+		RunE: run,
 	}
 
 	// Add version command
@@ -94,12 +95,15 @@ func main() {
 	rootCmd.Flags().StringVar(&peerID, "peer-id", "", "Peer ID for P2P mesh")
 
 	// HTTP API flags (URLs are hardcoded in the code)
-	rootCmd.PersistentFlags().BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification (dev only)")
+	rootCmd.PersistentFlags().BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false,
+		"Skip TLS certificate verification (dev only)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&transportMode, "transport", "grpc", "Transport mode (grpc, json)")
 
 	// Mark required flags
-	rootCmd.MarkFlagRequired("token")
+	if err := rootCmd.MarkFlagRequired("token"); err != nil {
+		log.Fatalf("Failed to mark flag as required: %v", err)
+	}
 
 	// Add subcommands
 	rootCmd.AddCommand(createP2PCommand())
@@ -568,10 +572,10 @@ func showVersion() {
 	if buildType != "production" {
 		fmt.Printf("\nBuild Configuration:\n")
 		if jwtSecret != "" {
-			fmt.Printf("JWT Secret:     %s...\n", jwtSecret[:min(8, len(jwtSecret))])
+			fmt.Printf("JWT Secret:     %s...\n", jwtSecret[:minInt(8, len(jwtSecret))])
 		}
-		if buildApiBase != "" {
-			fmt.Printf("API Base:       %s\n", buildApiBase)
+		if buildAPIBase != "" {
+			fmt.Printf("API Base:       %s\n", buildAPIBase)
 		}
 		if buildTenantID != "" {
 			fmt.Printf("Tenant ID:      %s\n", buildTenantID)
@@ -579,8 +583,8 @@ func showVersion() {
 	}
 }
 
-// min returns the minimum of two integers
-func min(a, b int) int {
+// minInt returns the minimum of two integers
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
@@ -612,7 +616,10 @@ func runP2P(cmd *cobra.Command, args []string) error {
 
 	// Generate peer ID if not provided
 	if peerID == "" {
-		hostname, _ := os.Hostname()
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "unknown"
+		}
 		peerID = fmt.Sprintf("peer-%s", hostname)
 	}
 

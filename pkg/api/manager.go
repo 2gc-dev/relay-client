@@ -449,7 +449,7 @@ func (m *Manager) GetRemoteICECandidates(req *ICECandidateRequest) (*ICECandidat
 	base := strings.TrimSuffix(m.client.baseURL, "/")
 	url := fmt.Sprintf("%s/api/v1/ice/candidates/%s", base, req.TargetPeerID)
 
-	httpReq, err := http.NewRequestWithContext(m.ctx, "GET", url, nil)
+	httpReq, err := http.NewRequestWithContext(m.ctx, "GET", url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ICE candidate request: %w", err)
 	}

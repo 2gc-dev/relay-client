@@ -8,6 +8,11 @@ import (
 	"github.com/2gc-dev/cloudbridge-client/pkg/types"
 )
 
+// newTestRelayLogger creates a new test relay logger
+func newTestRelayLogger() *relayLogger {
+	return NewRelayLogger("test")
+}
+
 // TestAutoSwitchManager_Stop tests that Stop() properly tears down WireGuard
 func TestAutoSwitchManager_Stop(t *testing.T) {
 	// Create test configuration with WireGuard enabled
@@ -79,7 +84,11 @@ func TestAutoSwitchManager_SwitchToQUIC(t *testing.T) {
 	if err != nil {
 		t.Skipf("Failed to start AutoSwitchManager (likely missing WireGuard tools): %v", err)
 	}
-	defer asm.Stop()
+	defer func() {
+		if err := asm.Stop(); err != nil {
+			t.Logf("Failed to stop AutoSwitchManager: %v", err)
+		}
+	}()
 
 	// Set a custom health check function that always returns false (unhealthy QUIC)
 	asm.SetHealthCheckFunc(func() bool { return false })
@@ -145,7 +154,11 @@ func TestAutoSwitchManager_HealthCheck(t *testing.T) {
 	if err != nil {
 		t.Skipf("Failed to start AutoSwitchManager (likely missing WireGuard tools): %v", err)
 	}
-	defer asm.Stop()
+	defer func() {
+		if err := asm.Stop(); err != nil {
+			t.Logf("Failed to stop AutoSwitchManager: %v", err)
+		}
+	}()
 
 	// Test health check function
 	healthCheckCalled := false
@@ -197,7 +210,11 @@ func TestAutoSwitchManager_CallbacksOnSwitch(t *testing.T) {
 	if err != nil {
 		t.Skipf("Failed to start AutoSwitchManager (likely missing WireGuard tools): %v", err)
 	}
-	defer asm.Stop()
+	defer func() {
+		if err := asm.Stop(); err != nil {
+			t.Logf("Failed to stop AutoSwitchManager: %v", err)
+		}
+	}()
 
 	// Add callback to track mode switches
 	var switchEvents []struct {

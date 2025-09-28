@@ -107,7 +107,10 @@ func NewClient(cfg *types.Config, configPath string) (*Client, error) {
 		// Set default instance if not specified
 		instance := cfg.Metrics.Pushgateway.Instance
 		if instance == "" {
-			hostname, _ := os.Hostname()
+			hostname, err := os.Hostname()
+			if err != nil {
+				hostname = "unknown"
+			}
 			instance = hostname
 		}
 
@@ -245,7 +248,9 @@ func (c *Client) Connect() error {
 
 		// Send hello via transport adapter
 		if err := c.transportAdapter.Hello("1.0", []string{"tls", "heartbeat", "tunnel_info", "grpc"}); err != nil {
-			c.transportAdapter.Disconnect()
+			if disconnErr := c.transportAdapter.Disconnect(); disconnErr != nil {
+				c.logger.Error("Failed to disconnect transport adapter after hello failure", "error", disconnErr)
+			}
 			return fmt.Errorf("failed to send hello via transport adapter: %w", err)
 		}
 
@@ -311,7 +316,9 @@ func (c *Client) Authenticate(token string) error {
 	}
 
 	// If using transport adapter (gRPC), delegate auth and skip legacy JSON path
-	c.logger.Info("Checking transport adapter condition", "useTransportAdapter", c.useTransportAdapter, "transportAdapter_nil", c.transportAdapter == nil)
+	c.logger.Info("Checking transport adapter condition",
+		"useTransportAdapter", c.useTransportAdapter,
+		"transportAdapter_nil", c.transportAdapter == nil)
 	if c.useTransportAdapter && c.transportAdapter != nil {
 		c.logger.Info("Using transport adapter for authentication")
 		clientID, tenantID, err := c.transportAdapter.Authenticate(token)

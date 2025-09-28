@@ -51,7 +51,6 @@ type PeerConnection struct {
 	Stream      *quicgo.Stream
 	ConnectedAt time.Time
 	LastSeen    time.Time
-	mu          sync.RWMutex
 }
 
 // NewManager creates a new P2P manager
@@ -69,7 +68,8 @@ func NewManager(config *P2PConfig, logger Logger) *Manager {
 }
 
 // NewManagerWithAPI creates a new P2P manager with HTTP API support
-func NewManagerWithAPI(config *P2PConfig, apiConfig *api.ManagerConfig, authManager *auth.AuthManager, token string, logger Logger) *Manager {
+func NewManagerWithAPI(config *P2PConfig, apiConfig *api.ManagerConfig,
+	authManager *auth.AuthManager, token string, logger Logger) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Parse heartbeat interval from mesh config
@@ -534,7 +534,9 @@ func (m *Manager) startPeerDiscovery() {
 								LastSeen:    time.Now().Unix(),
 								IsConnected: peer.IsOnline,
 							}
-							m.mesh.AddPeer(p2pPeer)
+							if err := m.mesh.AddPeer(p2pPeer); err != nil {
+								m.logger.Error("Failed to add peer to mesh", "peer_id", peer.PeerID, "error", err)
+							}
 						}
 					}
 				}

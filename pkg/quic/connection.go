@@ -296,7 +296,9 @@ func (q *QUICConnection) acceptConnections(ctx context.Context, listener *quic.L
 
 // handleIncomingConnection handles an incoming QUIC connection
 func (q *QUICConnection) handleIncomingConnection(conn *quic.Conn) {
-	defer conn.CloseWithError(0, "connection closed")
+	defer func() {
+		_ = conn.CloseWithError(0, "connection closed") // Ignore error in cleanup
+	}()
 
 	// Accept streams from this connection
 	for {
