@@ -236,4 +236,3 @@ func (wgc *WireGuardClient) ApplyWireGuardConfig(config string) error {
 	// В production должна быть интеграция с wg-quick
 	return fmt.Errorf("ApplyWireGuardConfig not implemented yet")
 }
-
