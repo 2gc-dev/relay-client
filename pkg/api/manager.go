@@ -402,20 +402,19 @@ func (m *Manager) sendHeartbeat() error {
 	return nil
 }
 
-// SendICESignaling sends ICE candidates to the relay server
-func (m *Manager) SendICESignaling(req *ICESignalingRequest) error {
-	// Use configured HTTP client base URL
+// postJSONRequest makes a POST request with JSON body and expects a response with Success field
+func (m *Manager) postJSONRequest(endpoint string, request, response interface{}, requestType string) error {
 	base := strings.TrimSuffix(m.client.baseURL, "/")
-	url := base + "/api/v1/ice/candidates"
+	url := base + endpoint
 
-	jsonData, err := json.Marshal(req)
+	jsonData, err := json.Marshal(request)
 	if err != nil {
-		return fmt.Errorf("failed to marshal ICE signaling request: %w", err)
+		return fmt.Errorf("failed to marshal %s request: %w", requestType, err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(m.ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create ICE signaling request: %w", err)
+		return fmt.Errorf("failed to create %s request: %w", requestType, err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -423,17 +422,26 @@ func (m *Manager) SendICESignaling(req *ICESignalingRequest) error {
 
 	resp, err := m.client.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("failed to send ICE signaling request: %w", err)
+		return fmt.Errorf("failed to send %s request: %w", requestType, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ICE signaling request failed with status: %d", resp.StatusCode)
+		return fmt.Errorf("%s request failed with status: %d", requestType, resp.StatusCode)
 	}
 
+	if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
+		return fmt.Errorf("failed to decode %s response: %w", requestType, err)
+	}
+
+	return nil
+}
+
+// SendICESignaling sends ICE candidates to the relay server
+func (m *Manager) SendICESignaling(req *ICESignalingRequest) error {
 	var response ICESignalingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return fmt.Errorf("failed to decode ICE signaling response: %w", err)
+	if err := m.postJSONRequest("/api/v1/ice/candidates", req, &response, "ICE signaling"); err != nil {
+		return err
 	}
 
 	if !response.Success {
@@ -482,35 +490,9 @@ func (m *Manager) GetRemoteICECandidates(req *ICECandidateRequest) (*ICECandidat
 
 // RequestP2PConnection requests a P2P connection to another peer
 func (m *Manager) RequestP2PConnection(req *P2PConnectionRequest) error {
-	base := strings.TrimSuffix(m.client.baseURL, "/")
-	url := base + "/api/v1/p2p/connect"
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("failed to marshal P2P connection request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(m.ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create P2P connection request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+m.token)
-
-	resp, err := m.client.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to send P2P connection request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("P2P connection request failed with status: %d", resp.StatusCode)
-	}
-
 	var response P2PConnectionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return fmt.Errorf("failed to decode P2P connection response: %w", err)
+	if err := m.postJSONRequest("/api/v1/p2p/connect", req, &response, "P2P connection"); err != nil {
+		return err
 	}
 
 	if !response.Success {

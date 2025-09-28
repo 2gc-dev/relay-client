@@ -145,7 +145,7 @@ func TestWireGuardManager_InterfaceOperations(t *testing.T) {
 	}
 
 	// Clean up any existing interface first
-	_ = wgm.destroyInterface() // Explicitly ignore errors
+	_ = wgm.destroyInterface() //nolint:errcheck // Explicitly ignore errors in test cleanup
 
 	// Test interface creation
 	err = wgm.createInterface()

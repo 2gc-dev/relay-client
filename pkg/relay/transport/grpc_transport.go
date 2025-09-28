@@ -301,7 +301,7 @@ func (gt *GRPCTransport) StreamHeartbeat(clientID, tenantID string, metricsChan 
 	// Send heartbeats from metrics channel
 	go func() {
 		defer func() {
-			_ = stream.CloseSend() // Ignore error in cleanup
+			_ = stream.CloseSend() //nolint:errcheck // Ignore error in cleanup
 		}()
 
 		for metrics := range metricsChan {

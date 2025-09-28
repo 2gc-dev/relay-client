@@ -251,22 +251,19 @@ func (q *QUICConnection) monitorConnection() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			q.mu.RLock()
-			connected := q.conn != nil
-			q.mu.RUnlock()
+	for range ticker.C {
+		q.mu.RLock()
+		connected := q.conn != nil
+		q.mu.RUnlock()
 
-			if !connected {
-				q.logger.Warn("QUIC connection lost")
-				return
-			}
-
-			// Log connection stats
-			stats := q.GetStats()
-			q.logger.Debug("QUIC connection stats", "stats", stats)
+		if !connected {
+			q.logger.Warn("QUIC connection lost")
+			return
 		}
+
+		// Log connection stats
+		stats := q.GetStats()
+		q.logger.Debug("QUIC connection stats", "stats", stats)
 	}
 }
 
@@ -297,7 +294,7 @@ func (q *QUICConnection) acceptConnections(ctx context.Context, listener *quic.L
 // handleIncomingConnection handles an incoming QUIC connection
 func (q *QUICConnection) handleIncomingConnection(conn *quic.Conn) {
 	defer func() {
-		_ = conn.CloseWithError(0, "connection closed") // Ignore error in cleanup
+		_ = conn.CloseWithError(0, "connection closed") //nolint:errcheck // Ignore error in cleanup
 	}()
 
 	// Accept streams from this connection

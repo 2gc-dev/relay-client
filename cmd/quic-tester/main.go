@@ -98,7 +98,7 @@ func main() {
 		return
 	}
 	defer func() {
-		_ = conn.CloseWithError(0, "bye") // Ignore error in cleanup
+		_ = conn.CloseWithError(0, "bye") //nolint:errcheck // Ignore error in cleanup
 	}()
 	hsDur := time.Since(hsStart)
 	tlsState := conn.ConnectionState().TLS
@@ -109,7 +109,8 @@ func main() {
 	log.Printf("🔐 Opening AUTH stream...")
 	authStream, err := conn.OpenStreamSync(context.Background())
 	if err != nil {
-		log.Fatalf("open auth stream failed: %v", err)
+		log.Printf("open auth stream failed: %v", err)
+		return
 	}
 	defer authStream.Close()
 	log.Printf("✅ AUTH stream opened")
@@ -117,7 +118,8 @@ func main() {
 	authLine := authPrefix + token // БЕЗ \n согласно DevOps
 	log.Printf("📤 Sending AUTH: %q", strings.TrimSpace(authLine))
 	if _, err := authStream.Write([]byte(authLine)); err != nil {
-		log.Fatalf("write AUTH failed: %v", err)
+		log.Printf("write AUTH failed: %v", err)
+		return
 	}
 	log.Printf("✅ AUTH sent (%d bytes)", len(authLine))
 
