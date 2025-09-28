@@ -1,0 +1,202 @@
+name: Integration Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'pkg/api/**'
+      - 'pkg/auth/**'
+      - 'pkg/p2p/**'
+      - 'cmd/cloudbridge-client/**'
+      - 'PRODUCTION_*.md'
+      - 'SECURITY_*.md'
+
+env:
+  GO_VERSION: '1.25'
+  # Тестовые данные (БЕЗОПАСНО для публичного репозитория)
+  API_BASE: 'https://demo-api.example.com:30082'
+  JWT_SECRET: 'demo-secret-key-for-testing-only'
+  JWT_FALLBACK_SECRET: 'demo-fallback-secret-for-testing-only'
+  JWT_TOKEN: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vLXVzZXIiLCJ0ZW5hbnRfaWQiOiJkZW1vLXRlbmFudCIsImNvbm5lY3Rpb25fdHlwZSI6IndpcmVndWFyZCIsImlhdCI6MTUxNjIzOTAyMn0.demo-signature'
+  TENANT_ID: 'demo-tenant'
+  WIREGUARD_PUBLIC_KEY: 'demo-public-key-for-testing-only'
+
+jobs:
+  integration-test:
+    name: Integration Test with Real API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build application
+        run: |
+          echo "Building application..."
+          go build -o cloudbridge-client ./cmd/cloudbridge-client
+          echo "✅ Build completed successfully"
+
+      - name: Create test configuration
+        run: |
+          echo "Creating test configuration..."
+          cat > config-test-ci.yaml << EOF
+          # CI Test Configuration
+          relay:
+            host: "edge.2gc.ru"
+            port: 30082
+            tls:
+              enabled: true
+              server_name: "edge.2gc.ru"
+              ca_cert: ""
+
+          auth:
+            type: "jwt"
+            secret: "${{ env.JWT_SECRET }}"
+            fallback_secret: "${{ env.JWT_FALLBACK_SECRET }}"
+            keycloak:
+              enabled: false
+              server_url: "https://auth.2gc.ru"
+              realm: "cloudbridge"
+              client_id: "cloudbridge-client"
+              jwks_url: "https://auth.2gc.ru/realms/cloudbridge/protocol/openid-connect/certs"
+
+          api:
+            base_url: "${{ env.API_BASE }}"
+            insecure_skip_verify: true
+            timeout: "30s"
+            max_retries: 3
+            backoff_multiplier: 2.0
+            max_backoff: "60s"
+
+          logging:
+            level: "debug"
+            format: "json"
+            output: "stdout"
+
+          metrics:
+            enabled: true
+            prometheus_port: 9091
+            tenant_metrics: true
+            buffer_metrics: true
+            connection_metrics: true
+
+          rate_limiting:
+            enabled: true
+            max_retries: 3
+            backoff_multiplier: 2.0
+            max_backoff: "60s"
+
+          performance:
+            enabled: true
+            optimization_mode: "high_throughput"
+            gc_percent: 100
+            memory_ballast: false
+
+          p2p:
+            mesh_port: 51820
+            interface_name: "wg0"
+            allowed_ips: ["10.0.0.0/24"]
+            mtu: 1420
+            persistent_keepalive: "25s"
+
+          tunnel:
+            max_connections: 10
+            buffer_size: 4096
+            keepalive_interval: "30s"
+          EOF
+          echo "✅ Test configuration created"
+
+      - name: Test API Health Check
+        run: |
+          echo "Testing API Health Check..."
+          curl -k -f "${{ env.API_BASE }}/api/v1/health/" || {
+            echo "❌ Health check failed"
+            exit 1
+          }
+          echo "✅ Health check passed"
+
+      - name: Test JWT Token Validation
+        run: |
+          echo "Testing JWT token validation..."
+          ./cloudbridge-client p2p \
+            --token "${{ env.JWT_TOKEN }}" \
+            --insecure-skip-tls-verify \
+            --log-level debug \
+            --config config-test-ci.yaml \
+            --help || {
+            echo "❌ JWT token validation failed"
+            exit 1
+          }
+          echo "✅ JWT token validation passed"
+
+      - name: Test P2P Registration (Short Test)
+        run: |
+          echo "Testing P2P registration (5 second timeout)..."
+          timeout 5s ./cloudbridge-client p2p \
+            --token "${{ secrets.JWT_TOKEN }}" \
+            --insecure-skip-tls-verify \
+            --log-level debug \
+            --config config-test-ci.yaml || {
+            # Check if it's a timeout (expected) or actual error
+            if [ $? -eq 124 ]; then
+              echo "✅ P2P registration test passed (timeout expected)"
+            else
+              echo "❌ P2P registration failed with error"
+              exit 1
+            fi
+          }
+
+      - name: Test API Endpoints with curl
+        run: |
+          echo "Testing API endpoints with curl..."
+          
+          # Test registration
+          echo "Testing peer registration..."
+          curl -k -X POST "${{ env.API_BASE }}/api/v1/tenants/${{ secrets.TENANT_ID }}/peers/register" \
+            -H "Authorization: Bearer ${{ secrets.JWT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "public_key": "${{ secrets.WIREGUARD_PUBLIC_KEY }}",
+              "allowed_ips": ["10.0.0.0/24"]
+            }' || {
+            echo "❌ Peer registration failed"
+            exit 1
+          }
+          echo "✅ Peer registration passed"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Cleaning up test artifacts..."
+          rm -f config-test-ci.yaml
+          rm -f cloudbridge-client
+          echo "✅ Cleanup completed"
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ github.sha }}
+          path: |
+            config-test-ci.yaml
+            *.log

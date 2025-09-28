@@ -1,24 +1,28 @@
-# CloudBridge Client Production Configuration
+# CloudBridge Client Configuration for Production
 
-# Relay Configuration
+# Relay Configuration - Production edge.2gc.ru
 relay:
-  host: "edge.2gc.ru"  # Relay сервер
-  port: 9090
+  host: "edge.2gc.ru"         # Production relay сервер
+  port: 8081                  # Production порт
+  base_url: "https://edge.2gc.ru:8081"  # Base URL for all API calls
   timeout: "30s"
   tls:
-    enabled: true
+    enabled: true               # Включаем HTTPS для production
     min_version: "1.3"
-    verify_cert: true
+    verify_cert: true           # Проверяем сертификаты в production
+    insecure_skip_verify: false # Не пропускаем проверку TLS сертификатов
     ca_cert: ""
     client_cert: ""
     client_key: ""
-    server_name: ""
+    server_name: "edge.2gc.ru"  # Production server name
 
 # Authentication Configuration
 auth:
-  type: "jwt"
-  secret: "YOUR_JWT_SECRET"           # Основной JWT секрет
-  fallback_secret: "YOUR_FALLBACK_SECRET"  # Fallback секрет для kid: "fallback-key"
+  type: "jwt"  # JWT аутентификация
+  secret: "85Sk/NfLq3gqzCXzmBKbJCpL+f5BssXz3G8dVi3sPiE="  # Правильный JWT секрет от DevOps
+  fallback_secret: "85Sk/NfLq3gqzCXzmBKbJCpL+f5BssXz3G8dVi3sPiE="  # Fallback секрет
+  skip_validation: false              # Включить валидацию JWT для production
+  disable_token_validation: false     # Включить валидацию токена
   keycloak:
     enabled: false
     server_url: ""
@@ -65,3 +69,88 @@ tunnel:
 heartbeat:
   interval: "10s"
   timeout: "5s"
+
+# ICE Configuration
+ice:
+  stun_servers:
+    - "edge.2gc.ru:30302"   # Production STUN сервер
+    - "stun.l.google.com:19302"  # Backup STUN
+  turn_servers:
+    - "edge.2gc.ru:3478"    # Production TURN сервер
+  derp_servers:
+    - "edge.2gc.ru:3479"    # Production DERP сервер
+  timeout: "30s"
+  max_binding_requests: 7
+  connectivity_checks: true
+  candidate_gathering: true
+
+# QUIC Configuration
+quic:
+  handshake_timeout: "10s"
+  idle_timeout: "30s"
+  max_streams: 100
+  max_stream_data: 1048576  # 1MB
+  keep_alive_period: "15s"
+  insecure_skip_verify: false # Проверяем сертификаты в production
+  masque_support: true        # Поддержка MASQUE протокола
+  http_datagrams: true        # Поддержка HTTP Datagrams
+
+# P2P Configuration
+p2p:
+  max_connections: 1000
+  session_timeout: "300s"
+  peer_discovery_interval: "30s"
+  connection_retry_interval: "5s"
+  max_retry_attempts: 3
+  fallback_enabled: true        # Включить fallback механизмы
+  derp_fallback: true          # DERP fallback
+  websocket_fallback: true     # WebSocket fallback
+
+# TURN Configuration
+turn:
+  enabled: true
+  servers:
+    - "localhost:3478"
+  username: "cloudbridge"
+  password: "cloudbridge123"
+  realm: "cloudbridge.local"
+  timeout: "30s"
+  max_allocations: 10
+
+# DERP Configuration
+derp:
+  enabled: true
+  servers:
+    - "localhost:3479"
+  timeout: "30s"
+  max_connections: 100
+  fallback_priority: 1
+
+# WebSocket Tunneling Configuration
+websocket:
+  enabled: true
+  endpoint: "ws://localhost:8080/ws"
+  timeout: "30s"
+  ping_interval: "15s"
+  max_reconnect_attempts: 5
+
+# WireGuard Configuration
+wireguard:
+  enabled: true
+  interface_name: "wg-cloudbridge"
+  port: 51820
+  mtu: 1420
+  persistent_keepalive: "25s"
+
+# API Configuration - Production edge.2gc.ru
+api:
+  base_url: "https://edge.2gc.ru:8081"           # Production API endpoint
+  p2p_api_url: "https://edge.2gc.ru:8081/api/v1/p2p"   # P2P API endpoint
+  heartbeat_url: "https://edge.2gc.ru:8081/api/v1/heartbeat" # Heartbeat API endpoint
+  health_url: "https://edge.2gc.ru:8081/health"  # Health check endpoint
+  metrics_url: "https://edge.2gc.ru:8081/metrics" # Metrics endpoint
+  insecure_skip_verify: false            # Проверяем сертификаты в production
+  timeout: "30s"
+  max_retries: 3
+  backoff_multiplier: 2.0
+  max_backoff: "60s"

@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
+	"time"
 
+	"github.com/2gc-dev/cloudbridge-client/pkg/api"
 	"github.com/2gc-dev/cloudbridge-client/pkg/auth"
 	"github.com/2gc-dev/cloudbridge-client/pkg/config"
 	"github.com/2gc-dev/cloudbridge-client/pkg/errors"
@@ -23,25 +26,31 @@ import (
 
 // Client represents a CloudBridge Relay client
 type Client struct {
-	config         *types.Config
-	conn           net.Conn
-	encoder        *json.Encoder
-	decoder        *json.Decoder
-	authManager    *auth.AuthManager
-	tunnelManager  *tunnel.Manager
-	heartbeatMgr   *heartbeat.Manager
-	retryStrategy  *errors.RetryStrategy
-	metrics        *metrics.Metrics
-	optimizer      *performance.Optimizer
-	p2pManager     *p2p.Manager
-	connectionType string
-	logger         *relayLogger
-	mu             sync.RWMutex
-	connected      bool
-	clientID       string
-	tenantID       string
-	ctx            context.Context
-	cancel         context.CancelFunc
+	config              *types.Config
+	configPath          string
+	configWatcher       *config.ConfigWatcher
+	conn                net.Conn
+	encoder             *json.Encoder
+	decoder             *json.Decoder
+	authManager         *auth.AuthManager
+	tunnelManager       *tunnel.Manager
+	heartbeatMgr        *heartbeat.Manager
+	retryStrategy       *errors.RetryStrategy
+	metrics             *metrics.Metrics
+	optimizer           *performance.Optimizer
+	p2pManager          *p2p.Manager
+	autoSwitchMgr       *AutoSwitchManager
+	transportAdapter    *TransportAdapter
+	useTransportAdapter bool
+	connectionType      string
+	logger              *relayLogger
+	mu                  sync.RWMutex
+	connected           bool
+	clientID            string
+	tenantID            string
+	tokenString         string
+	ctx                 context.Context
+	cancel              context.CancelFunc
 }
 
 // Message types as defined in the requirements
@@ -64,13 +73,15 @@ const (
 )
 
 // NewClient creates a new CloudBridge Relay client
-func NewClient(cfg *types.Config) (*Client, error) {
+func NewClient(cfg *types.Config, configPath string) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create authentication manager
 	authManager, err := auth.NewAuthManager(&auth.AuthConfig{
-		Type:   cfg.Auth.Type,
-		Secret: cfg.Auth.Secret,
+		Type:           cfg.Auth.Type,
+		Secret:         cfg.Auth.Secret,
+		FallbackSecret: cfg.Auth.FallbackSecret,
+		SkipValidation: cfg.Auth.SkipValidation,
 		Keycloak: &auth.KeycloakConfig{
 			ServerURL: cfg.Auth.Keycloak.ServerURL,
 			Realm:     cfg.Auth.Keycloak.Realm,
@@ -90,22 +101,63 @@ func NewClient(cfg *types.Config) (*Client, error) {
 		cfg.RateLimiting.MaxBackoff,
 	)
 
-	// Create metrics system
-	metrics := metrics.NewMetrics(cfg.Metrics.Enabled, cfg.Metrics.PrometheusPort)
+	// Create metrics system with Pushgateway support
+	var metricsSystem *metrics.Metrics
+	if cfg.Metrics.Pushgateway.Enabled {
+		// Set default instance if not specified
+		instance := cfg.Metrics.Pushgateway.Instance
+		if instance == "" {
+			hostname, _ := os.Hostname()
+			instance = hostname
+		}
+
+		pushConfig := &metrics.PushgatewayConfig{
+			Enabled:      cfg.Metrics.Pushgateway.Enabled,
+			URL:          cfg.Metrics.Pushgateway.URL,
+			JobName:      cfg.Metrics.Pushgateway.JobName,
+			Instance:     instance,
+			PushInterval: cfg.Metrics.Pushgateway.PushInterval,
+		}
+		metricsSystem = metrics.NewMetricsWithPushgateway(cfg.Metrics.Enabled, cfg.Metrics.PrometheusPort, pushConfig)
+	} else {
+		metricsSystem = metrics.NewMetrics(cfg.Metrics.Enabled, cfg.Metrics.PrometheusPort)
+	}
 
 	// Create performance optimizer
 	optimizer := performance.NewOptimizer(cfg.Performance.Enabled)
 
 	client := &Client{
 		config:        cfg,
+		configPath:    configPath,
 		authManager:   authManager,
 		retryStrategy: retryStrategy,
-		metrics:       metrics,
+		metrics:       metricsSystem,
 		optimizer:     optimizer,
 		logger:        NewRelayLogger("relay-client"),
 		ctx:           ctx,
 		cancel:        cancel,
 	}
+
+	// Create AutoSwitchManager for WireGuard fallback
+	client.autoSwitchMgr = NewAutoSwitchManager(cfg, client.logger)
+
+	// Add callback to update transport mode metrics
+	client.autoSwitchMgr.AddSwitchCallback(func(from, to TransportMode) {
+		var modeValue int
+		switch to {
+		case TransportModeQUIC:
+			modeValue = 0
+		case TransportModeWireGuard:
+			modeValue = 1
+		default:
+			modeValue = 0
+		}
+		client.metrics.SetTransportMode(modeValue)
+	})
+
+	// Create transport adapter for gRPC support
+	client.transportAdapter = NewTransportAdapter(cfg, client.logger)
+	client.useTransportAdapter = true // Always use transport adapter for modern clients
 
 	// Create tunnel manager
 	client.tunnelManager = tunnel.NewManager(client)
@@ -124,9 +176,50 @@ func NewClient(cfg *types.Config) (*Client, error) {
 	}
 
 	// Start metrics server
-	if err := metrics.Start(); err != nil {
+	if err := metricsSystem.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to start metrics server: %w", err)
+	}
+
+	// Start AutoSwitchManager
+	if err := client.autoSwitchMgr.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to start AutoSwitchManager: %w", err)
+	}
+
+	// Initialize transport adapter
+	if err := client.transportAdapter.Initialize(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize transport adapter: %w", err)
+	}
+
+	// Sync transport mode with transport adapter
+	currentMode := client.transportAdapter.GetCurrentMode()
+	client.logger.Info("Transport adapter mode check", "currentMode", currentMode, "before_useTransportAdapter", client.useTransportAdapter)
+	if currentMode == "grpc" {
+		client.useTransportAdapter = true
+		client.logger.Info("Synced with transport adapter", "mode", currentMode, "useTransportAdapter", client.useTransportAdapter)
+	} else {
+		client.logger.Info("Mode is not gRPC, keeping useTransportAdapter as false", "mode", currentMode)
+	}
+
+	// Initialize config watcher for hot-reload
+	if configPath != "" {
+		configWatcher, err := config.NewConfigWatcher(configPath, &configLoggerAdapter{logger: client.logger})
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create config watcher: %w", err)
+		}
+		client.configWatcher = configWatcher
+
+		// Add config change callback
+		configWatcher.AddCallback(client.handleConfigChange)
+
+		// Start config watcher
+		if err := configWatcher.Start(); err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to start config watcher: %w", err)
+		}
 	}
 
 	return client, nil
@@ -137,9 +230,31 @@ func (c *Client) Connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.logger.Info("Connect called", "useTransportAdapter", c.useTransportAdapter, "transportAdapter_nil", c.transportAdapter == nil)
+
 	if c.connected {
 		return fmt.Errorf("already connected")
 	}
+
+	// Use transport adapter if enabled
+	if c.useTransportAdapter {
+		c.logger.Info("Using transport adapter for connection")
+		if err := c.transportAdapter.Connect(); err != nil {
+			return fmt.Errorf("failed to connect via transport adapter: %w", err)
+		}
+
+		// Send hello via transport adapter
+		if err := c.transportAdapter.Hello("1.0", []string{"tls", "heartbeat", "tunnel_info", "grpc"}); err != nil {
+			c.transportAdapter.Disconnect()
+			return fmt.Errorf("failed to send hello via transport adapter: %w", err)
+		}
+
+		c.connected = true
+		return nil
+	}
+
+	// Legacy JSON transport
+	c.logger.Warn("Using deprecated JSON transport, consider switching to gRPC with --transport grpc")
 
 	// Create TLS config
 	tlsConfig, err := config.CreateTLSConfig(c.config)
@@ -189,9 +304,27 @@ func (c *Client) Authenticate(token string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.logger.Info("Authenticate called", "useTransportAdapter", c.useTransportAdapter, "transportAdapter_nil", c.transportAdapter == nil)
+
 	if !c.connected {
 		return fmt.Errorf("not connected")
 	}
+
+	// If using transport adapter (gRPC), delegate auth and skip legacy JSON path
+	c.logger.Info("Checking transport adapter condition", "useTransportAdapter", c.useTransportAdapter, "transportAdapter_nil", c.transportAdapter == nil)
+	if c.useTransportAdapter && c.transportAdapter != nil {
+		c.logger.Info("Using transport adapter for authentication")
+		clientID, tenantID, err := c.transportAdapter.Authenticate(token)
+		if err != nil {
+			return err
+		}
+		c.clientID = clientID
+		c.tenantID = tenantID
+		c.tokenString = token
+		return nil
+	}
+
+	c.logger.Info("Using legacy JSON authentication")
 
 	// Validate token and extract claims
 	validatedToken, err := c.authManager.ValidateToken(token)
@@ -205,8 +338,9 @@ func (c *Client) Authenticate(token string) error {
 		return fmt.Errorf("failed to extract claims: %w", err)
 	}
 
-	// Store tenant ID
+	// Store tenant ID and token string
 	c.tenantID = tenantID
+	c.tokenString = token
 
 	// Create auth message
 	authMsg, err := c.authManager.CreateAuthMessage(token)
@@ -272,6 +406,30 @@ func (c *Client) CreateTunnel(tunnelID string, localPort int, remoteHost string,
 		return fmt.Errorf("not connected")
 	}
 
+	// If using transport adapter (gRPC), delegate to transport adapter
+	if c.useTransportAdapter && c.transportAdapter != nil {
+		c.logger.Info("Creating tunnel via transport adapter",
+			"tunnel_id", tunnelID,
+			"tenant_id", c.tenantID,
+			"local_port", localPort,
+			"remote_host", remoteHost,
+			"remote_port", remotePort)
+
+		if err := c.transportAdapter.CreateTunnel(tunnelID, c.tenantID, localPort, remoteHost, remotePort); err != nil {
+			return fmt.Errorf("failed to create tunnel via transport adapter: %w", err)
+		}
+
+		// Register tunnel with tunnel manager
+		if err := c.tunnelManager.RegisterTunnel(tunnelID, localPort, remoteHost, remotePort); err != nil {
+			return fmt.Errorf("failed to register tunnel: %w", err)
+		}
+
+		return nil
+	}
+
+	// Legacy JSON transport path
+	c.logger.Info("Creating tunnel via legacy JSON transport", "tunnel_id", tunnelID)
+
 	// Create tunnel info message
 	tunnelMsg := map[string]interface{}{
 		"type":        MessageTypeTunnelInfo,
@@ -325,8 +483,8 @@ func (c *Client) StopHeartbeat() {
 	c.heartbeatMgr.Stop()
 }
 
-// Close closes the client connection and cleans up resources
-func (c *Client) Close() error {
+// Disconnect disconnects from the relay server
+func (c *Client) Disconnect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -334,8 +492,59 @@ func (c *Client) Close() error {
 		return nil
 	}
 
+	c.logger.Info("Disconnecting from relay server")
+
+	// Use transport adapter if enabled
+	if c.useTransportAdapter && c.transportAdapter != nil {
+		if err := c.transportAdapter.Disconnect(); err != nil {
+			c.logger.Warn("Failed to disconnect transport adapter", "error", err)
+		}
+	}
+
+	// Close legacy connection if exists
+	if c.conn != nil {
+		if err := c.conn.Close(); err != nil {
+			c.logger.Warn("Failed to close legacy connection", "error", err)
+		}
+		c.conn = nil
+		c.encoder = nil
+		c.decoder = nil
+	}
+
+	c.connected = false
+	c.logger.Info("Disconnected from relay server")
+	return nil
+}
+
+// Close closes the client connection and cleans up resources
+func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected {
+		// Still need to clean up resources even if not connected
+		c.cancel()
+		return nil
+	}
+
 	// Stop heartbeat
 	c.heartbeatMgr.Stop()
+
+	// Stop AutoSwitchManager
+	if c.autoSwitchMgr != nil {
+		if err := c.autoSwitchMgr.Stop(); err != nil {
+			// Log error but don't fail close operation
+			fmt.Printf("Failed to stop AutoSwitchManager: %v\n", err)
+		}
+	}
+
+	// Stop config watcher
+	if c.configWatcher != nil {
+		if err := c.configWatcher.Stop(); err != nil {
+			// Log error but don't fail close operation
+			fmt.Printf("Failed to stop config watcher: %v\n", err)
+		}
+	}
 
 	// Stop metrics server
 	if c.metrics != nil {
@@ -420,6 +629,18 @@ func (c *Client) SendHeartbeat() error {
 		return fmt.Errorf("not connected")
 	}
 
+	// If using transport adapter (gRPC), delegate to transport adapter
+	if c.useTransportAdapter && c.transportAdapter != nil {
+		c.logger.Debug("Sending heartbeat via transport adapter",
+			"client_id", c.clientID,
+			"tenant_id", c.tenantID)
+
+		return c.transportAdapter.SendHeartbeat(c.clientID, c.tenantID)
+	}
+
+	// Legacy JSON transport path
+	c.logger.Debug("Sending heartbeat via legacy JSON transport")
+
 	heartbeatMsg := map[string]interface{}{
 		"type": MessageTypeHeartbeat,
 	}
@@ -478,8 +699,19 @@ func (c *Client) initializeP2PManager(token *jwt.Token) error {
 	// Create P2P logger
 	p2pLogger := &p2pLogger{client: c}
 
-	// Create P2P manager
-	c.p2pManager = p2p.NewManager(p2pConfig, p2pLogger)
+	// Create P2P manager with HTTP API support
+	// Use HTTPS API on port 30082 for P2P operations
+	apiConfig := &api.ManagerConfig{
+		BaseURL:            c.config.API.BaseURL,
+		InsecureSkipVerify: c.config.API.InsecureSkipVerify,
+		Timeout:            c.config.API.Timeout,
+		MaxRetries:         c.config.API.MaxRetries,
+		BackoffMultiplier:  c.config.API.BackoffMultiplier,
+		MaxBackoff:         c.config.API.MaxBackoff,
+	}
+
+	// Use stored token string for API manager
+	c.p2pManager = p2p.NewManagerWithAPI(p2pConfig, apiConfig, c.authManager, c.tokenString, p2pLogger)
 
 	// Start P2P manager
 	if err := c.p2pManager.Start(); err != nil {
@@ -505,6 +737,58 @@ func (c *Client) GetConnectionType() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connectionType
+}
+
+// GetAutoSwitchManager returns the AutoSwitchManager
+func (c *Client) GetAutoSwitchManager() *AutoSwitchManager {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.autoSwitchMgr
+}
+
+// GetTransportMode returns the current transport mode
+func (c *Client) GetTransportMode() TransportMode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.autoSwitchMgr != nil {
+		return c.autoSwitchMgr.GetCurrentMode()
+	}
+	return TransportModeQUIC
+}
+
+// SetTransportMode sets the transport mode (grpc or json)
+func (c *Client) SetTransportMode(mode string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Info("SetTransportMode called", "mode", mode, "current_useTransportAdapter", c.useTransportAdapter)
+
+	switch mode {
+	case "grpc":
+		c.useTransportAdapter = true
+		if err := c.transportAdapter.SetTransportMode("grpc"); err != nil {
+			return fmt.Errorf("failed to set gRPC transport mode: %w", err)
+		}
+		c.logger.Info("Switched to gRPC transport mode", "useTransportAdapter", c.useTransportAdapter)
+	case "json":
+		c.useTransportAdapter = false
+		c.logger.Info("Switched to JSON transport mode", "useTransportAdapter", c.useTransportAdapter)
+	default:
+		return fmt.Errorf("unsupported transport mode: %s", mode)
+	}
+
+	return nil
+}
+
+// GetCurrentTransportMode returns the current transport protocol mode
+func (c *Client) GetCurrentTransportMode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.useTransportAdapter {
+		return c.transportAdapter.GetCurrentMode()
+	}
+	return "json"
 }
 
 // p2pLogger implements the p2p.Logger interface
@@ -570,4 +854,161 @@ func (rl *relayLogger) Warn(msg string, fields ...interface{}) {
 	} else {
 		fmt.Printf("[%s] WARN: %s\n", rl.prefix, msg)
 	}
+}
+
+// handleConfigChange handles configuration changes from the watcher
+func (c *Client) handleConfigChange(oldConfig, newConfig *types.Config) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Info("Processing configuration changes")
+
+	// Update log level if changed
+	if oldConfig.Logging.Level != newConfig.Logging.Level {
+		c.logger.Info("Log level changed",
+			"old_level", oldConfig.Logging.Level,
+			"new_level", newConfig.Logging.Level)
+		// In a real implementation, you would update the logger level here
+	}
+
+	// Update TLS settings if changed
+	if oldConfig.Relay.TLS.VerifyCert != newConfig.Relay.TLS.VerifyCert ||
+		oldConfig.Relay.TLS.Enabled != newConfig.Relay.TLS.Enabled ||
+		oldConfig.Relay.TLS.CACert != newConfig.Relay.TLS.CACert {
+		c.logger.Info("TLS settings changed, reconnecting to apply changes")
+
+		// If connected, trigger reconnection to apply new TLS settings
+		if c.connected {
+			go func() {
+				c.logger.Info("Reconnecting due to TLS configuration changes")
+
+				// Disconnect current connection
+				if err := c.Disconnect(); err != nil {
+					c.logger.Error("Failed to disconnect for TLS reload", "error", err)
+					return
+				}
+
+				// Wait a moment for clean disconnect
+				time.Sleep(1 * time.Second)
+
+				// Reconnect with new TLS settings
+				if err := c.Connect(); err != nil {
+					c.logger.Error("Failed to reconnect after TLS reload", "error", err)
+				} else {
+					c.logger.Info("Successfully reconnected with new TLS settings")
+				}
+			}()
+		}
+	}
+
+	// Update endpoints if changed
+	if oldConfig.Relay.Host != newConfig.Relay.Host ||
+		oldConfig.Relay.Port != newConfig.Relay.Port ||
+		oldConfig.API.BaseURL != newConfig.API.BaseURL {
+		c.logger.Info("Endpoint settings changed, will take effect on next connection")
+	}
+
+	// Handle credential changes (requires re-authentication)
+	if oldConfig.Auth.Secret != newConfig.Auth.Secret {
+		c.logger.Info("Authentication credentials changed, re-authentication required")
+
+		// Store new token for re-authentication
+		c.tokenString = newConfig.Auth.Secret
+
+		// If connected, trigger re-authentication
+		if c.connected {
+			go func() {
+				c.logger.Info("Re-authenticating with new credentials")
+				if err := c.Authenticate(newConfig.Auth.Secret); err != nil {
+					c.logger.Error("Re-authentication failed", "error", err)
+				} else {
+					c.logger.Info("Re-authentication successful")
+				}
+			}()
+		}
+	}
+
+	// Update the client's config reference
+	c.config = newConfig
+
+	c.logger.Info("Configuration changes processed successfully")
+	return nil
+}
+
+// GetConfigWatcher returns the config watcher
+func (c *Client) GetConfigWatcher() *config.ConfigWatcher {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.configWatcher
+}
+
+// ForceConfigReload forces a configuration reload
+func (c *Client) ForceConfigReload() error {
+	if c.configWatcher == nil {
+		return fmt.Errorf("config watcher not initialized")
+	}
+	return c.configWatcher.ForceReload()
+}
+
+// UpdateMetrics updates client metrics (called periodically)
+func (c *Client) UpdateMetrics() {
+	if c.metrics == nil {
+		return
+	}
+
+	// Update P2P sessions count
+	if c.p2pManager != nil {
+		// In a real implementation, you would get the actual session count
+		// For now, we'll use a placeholder
+		c.metrics.SetP2PSessions(1) // Placeholder
+	} else {
+		c.metrics.SetP2PSessions(0)
+	}
+
+	// Update transport mode based on current settings
+	if c.useTransportAdapter {
+		c.metrics.SetTransportMode(2) // gRPC mode
+	} else {
+		// Use AutoSwitchManager mode
+		mode := c.autoSwitchMgr.GetCurrentMode()
+		switch mode {
+		case TransportModeQUIC:
+			c.metrics.SetTransportMode(0)
+		case TransportModeWireGuard:
+			c.metrics.SetTransportMode(1)
+		default:
+			c.metrics.SetTransportMode(0)
+		}
+	}
+}
+
+// RecordDataTransfer records data transfer for metrics
+func (c *Client) RecordDataTransfer(bytesSent, bytesRecv int64) {
+	if c.metrics == nil {
+		return
+	}
+
+	c.metrics.RecordClientBytesSent(bytesSent)
+	c.metrics.RecordClientBytesRecv(bytesRecv)
+}
+
+// configLoggerAdapter adapts relayLogger to config.Logger interface
+type configLoggerAdapter struct {
+	logger *relayLogger
+}
+
+func (cla *configLoggerAdapter) Info(msg string, fields ...interface{}) {
+	cla.logger.Info(msg, fields...)
+}
+
+func (cla *configLoggerAdapter) Error(msg string, fields ...interface{}) {
+	cla.logger.Error(msg, fields...)
+}
+
+func (cla *configLoggerAdapter) Debug(msg string, fields ...interface{}) {
+	cla.logger.Debug(msg, fields...)
+}
+
+func (cla *configLoggerAdapter) Warn(msg string, fields ...interface{}) {
+	cla.logger.Warn(msg, fields...)
 }

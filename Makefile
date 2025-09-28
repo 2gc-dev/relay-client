@@ -1,199 +1,246 @@
-# ---- Flags & meta ----
+# CloudBridge Client Makefile
+# Cross-platform build system
+
+# Build variables
+VERSION ?= dev
+BUILD_TYPE ?= development
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GO_VERSION := $(shell go version | cut -d' ' -f3)
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Linker flags
+LDFLAGS := -s -w \
+	-X main.version=$(VERSION) \
+	-X main.buildType=$(BUILD_TYPE) \
+	-X main.buildTime=$(BUILD_TIME) \
+	-X main.gitCommit=$(GIT_COMMIT)
+
+# Build targets
 BINARY_NAME := cloudbridge-client
-VERSION     := $(shell cat VERSION 2>/dev/null || git describe --tags --always --dirty)
-GIT_COMMIT  := $(shell git rev-parse --short HEAD)
-BUILD_TIME  := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+CMD_DIR := ./cmd/cloudbridge-client
 
-# Разделяем «ldflags» и «флаги go build», чтобы не дублировать -ldflags
-LDFLAGS_BASE := -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)
-LDFLAGS_SIZE := -s -w
-# Для воспроизводимости: отключаем VCS-метаданные и чистим пути
-BUILD_FLAGS  := -trimpath -buildvcs=false
+# Default target
+.PHONY: all
+all: build
 
-# Платформы Go (без arm/v7 в виде «arch»)
-PLATFORMS := linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64
-
-# ARMv7 выносим отдельно (GOARM=7)
-ARMV7_PLATFORMS := linux/arm
-
-RUSSIAN_PLATFORMS := astra/amd64 alt/amd64 rosa/amd64 redos/amd64 vos/amd64
-ENTERPRISE_PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
-
-BUILD_DIR     := build
-PACKAGE_DIR   := packages
-CONTAINER_DIR := containers
-VM_DIR        := vm-images
-
-.PHONY: all build clean test install build-all build-russian build-enterprise build-packages build-containers build-vm help
-
-all: clean build
-
+# Build for current platform
+.PHONY: build
 build:
-	@echo "Building $(BINARY_NAME)..."
-	@go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o bin/$(BINARY_NAME) ./cmd/cloudbridge-client
+	@echo "Building CloudBridge Client for current platform..."
+	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) $(CMD_DIR)
+	@echo "Build complete: $(BINARY_NAME)"
 
-# Multi-platform
-build-all:
-	@echo "Building for all platforms..."
-	@mkdir -p $(BUILD_DIR)
-	@for platform in $(PLATFORMS); do \
-		os=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-$${os}-$${arch}"; \
-		[ "$${os}" = "windows" ] && out="$${out}.exe"; \
-		echo "-> $${os}/$${arch}"; \
-		GOOS=$${os} GOARCH=$${arch} CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
-	@# ARMv7 (GOARM=7)
-	@for platform in $(ARMV7_PLATFORMS); do \
-		os=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-$${os}-armv7"; \
-		echo "-> $${os}/arm (GOARM=7)"; \
-		GOOS=$${os} GOARCH=arm GOARM=7 CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
+# Build for all platforms
+.PHONY: build-all
+build-all: build-linux build-windows build-darwin
+	@echo "All platform builds complete"
 
-# Russian distros (linux/amd64, разные репозитории)
-build-russian:
-	@echo "Building for Russian Linux distros (glibc) ..."
-	@mkdir -p $(BUILD_DIR)
-	@for platform in $(RUSSIAN_PLATFORMS); do \
-		distro=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-$${distro}-$${arch}"; \
-		echo "-> $$distro/$$arch (GOOS=linux)"; \
-		GOOS=linux GOARCH=$${arch} CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
+# Linux builds
+.PHONY: build-linux
+build-linux: build-linux-amd64 build-linux-arm64
 
-# Enterprise (минимальный размер + мета)
-build-enterprise:
-	@echo "Building Enterprise..."
-	@mkdir -p $(BUILD_DIR)
-	@for platform in $(ENTERPRISE_PLATFORMS); do \
-		os=$${platform%/*}; arch=$${platform#*/}; \
-		out="$(BUILD_DIR)/$(BINARY_NAME)-enterprise-$${os}-$${arch}"; \
-		[ "$${os}" = "windows" ] && out="$${out}.exe"; \
-		echo "-> enterprise $${os}/$${arch}"; \
-		GOOS=$${os} GOARCH=$${arch} CGO_ENABLED=0 \
-		go build $(BUILD_FLAGS) -ldflags '$(LDFLAGS_BASE) $(LDFLAGS_SIZE)' -o "$${out}" ./cmd/cloudbridge-client; \
-	done
+.PHONY: build-linux-amd64
+build-linux-amd64:
+	@echo "Building for Linux AMD64..."
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=linux -X main.buildArch=amd64" \
+		-o $(BINARY_NAME)-linux-amd64 $(CMD_DIR)
 
-build-packages: build-all
-	@echo "Creating packages..."
-	@mkdir -p $(PACKAGE_DIR)
-	@./scripts/build-packages.sh
+.PHONY: build-linux-arm64
+build-linux-arm64:
+	@echo "Building for Linux ARM64..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=linux -X main.buildArch=arm64" \
+		-o $(BINARY_NAME)-linux-arm64 $(CMD_DIR)
 
-build-containers:
-	@echo "Building containers..."
-	@mkdir -p $(CONTAINER_DIR)
-	@./scripts/build-containers.sh
+# Windows builds
+.PHONY: build-windows
+build-windows: build-windows-amd64 build-windows-arm64
 
-build-vm:
-	@echo "Building VM images..."
-	@mkdir -p $(VM_DIR)
-	@./scripts/build-vm-images.sh
+.PHONY: build-windows-amd64
+build-windows-amd64:
+	@echo "Building for Windows AMD64..."
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=windows -X main.buildArch=amd64" \
+		-o $(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
 
-build-universal: build-all build-russian build-enterprise
-	@echo "Building for all platforms..."
-ifeq ($(SKIP_PACKAGES),1)
-	@echo "Skipping packaging (SKIP_PACKAGES=1)"
-else
-	$(MAKE) build-packages
-	$(MAKE) build-containers
-	$(MAKE) build-vm
-endif
+.PHONY: build-windows-arm64
+build-windows-arm64:
+	@echo "Building for Windows ARM64..."
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=windows -X main.buildArch=arm64" \
+		-o $(BINARY_NAME)-windows-arm64.exe $(CMD_DIR)
 
-clean:
-	@echo "Cleaning..."
-	@rm -rf bin/ $(BUILD_DIR)/ $(PACKAGE_DIR)/ $(CONTAINER_DIR)/ $(VM_DIR)/ coverage.out coverage.html
+# macOS builds
+.PHONY: build-darwin
+build-darwin: build-darwin-amd64 build-darwin-arm64
 
+.PHONY: build-darwin-amd64
+build-darwin-amd64:
+	@echo "Building for macOS AMD64..."
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=darwin -X main.buildArch=amd64" \
+		-o $(BINARY_NAME)-darwin-amd64 $(CMD_DIR)
+
+.PHONY: build-darwin-arm64
+build-darwin-arm64:
+	@echo "Building for macOS ARM64 (Apple Silicon)..."
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS) -X main.buildOS=darwin -X main.buildArch=arm64" \
+		-o $(BINARY_NAME)-darwin-arm64 $(CMD_DIR)
+
+# Testing
+.PHONY: test
 test:
 	@echo "Running tests..."
-	@go test -v ./...
+	go test -v ./pkg/... -tags=mock
 
-test-race:
-	@echo "Running tests (race)..."
-	@go test -race -v ./...
-
+.PHONY: test-coverage
 test-coverage:
-	@echo "Running tests (coverage)..."
-	@go test -coverprofile=coverage.out ./...
-	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Running tests with coverage..."
+	go test -v -cover ./pkg/... -tags=mock
 
-install: build
-	@echo "Installing (Linux systemd only)..."
-	@which systemctl >/dev/null 2>&1 && { \
-		sudo cp bin/$(BINARY_NAME) /usr/local/bin/; \
-		sudo mkdir -p /etc/cloudbridge-client; \
-		sudo cp config/config.yaml /etc/cloudbridge-client/; \
-		sudo cp deploy/cloudbridge-client.service /etc/systemd/system/; \
-		sudo systemctl daemon-reload; \
-		sudo systemctl enable cloudbridge-client; \
-		sudo systemctl start cloudbridge-client; \
-	} || { echo "Skip: systemd not found"; }
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests..."
+	go test -v ./pkg/... -tags=integration
 
-uninstall:
-	@echo "Uninstall (Linux systemd only)..."
-	@which systemctl >/dev/null 2>&1 && { \
-		sudo systemctl stop cloudbridge-client || true; \
-		sudo systemctl disable cloudbridge-client || true; \
-		sudo rm -f /usr/local/bin/$(BINARY_NAME); \
-		sudo rm -f /etc/systemd/system/cloudbridge-client.service; \
-		sudo systemctl daemon-reload; \
-	} || { echo "Skip: systemd not found"; }
-
-deps:
-	@echo "Downloading modules..."
-	@go mod download
-	@go mod tidy
-
+# Linting and formatting
+.PHONY: lint
 lint:
-	@echo "Running golangci-lint..."
-	@golangci-lint run
+	@echo "Running linters..."
+	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found, skipping advanced linting"; \
+	fi
 
+.PHONY: fmt
 fmt:
-	@echo "Formatting..."
-	@go fmt ./...
+	@echo "Formatting code..."
+	go fmt ./...
 
-vet:
-	@echo "go vet..."
-	@go vet ./...
+.PHONY: fmt-check
+fmt-check:
+	@echo "Checking code formatting..."
+	@test -z "$$(gofmt -s -l . | grep -v vendor/)" || (echo "Code not formatted, run 'make fmt'" && exit 1)
 
-security-scan:
-	@echo "Security scan..."
-	@./scripts/security-scan.sh
+# Dependencies
+.PHONY: deps
+deps:
+	@echo "Downloading dependencies..."
+	go mod download
+	go mod tidy
 
-bench:
-	@echo "Benchmarks..."
-	@go test -bench=. ./...
+.PHONY: deps-update
+deps-update:
+	@echo "Updating dependencies..."
+	go get -u ./...
+	go mod tidy
 
-docs:
-	@echo "Generating docs (stdout)..."
-	@go doc -all ./...
+# Setup scripts
+.PHONY: setup-linux
+setup-linux:
+	@echo "Setting up WireGuard for Linux..."
+	sudo ./scripts/setup-wg-linux.sh
 
-release: clean build-universal
-	@echo "Preparing release..."
-	@./scripts/prepare-release.sh
+.PHONY: setup-windows
+setup-windows:
+	@echo "Setting up WireGuard for Windows..."
+	@echo "Run this in Administrator PowerShell:"
+	@echo ".\scripts\setup-wg-windows.ps1"
 
-# Workflow testing
-test-workflows:
-	@echo "Testing workflows locally..."
-	@chmod +x test-workflow-local.sh
-	@./test-workflow-local.sh
+# Clean up
+.PHONY: clean
+clean:
+	@echo "Cleaning up build artifacts..."
+	rm -f $(BINARY_NAME)
+	rm -f $(BINARY_NAME)-*
+	go clean
 
-test-workflows-act:
-	@echo "Testing workflows with act..."
-	@chmod +x test-workflows-with-act.sh
-	@./test-workflows-with-act.sh
+# Install (current platform only)
+.PHONY: install
+install: build
+	@echo "Installing CloudBridge Client..."
+	@if [ "$(shell uname)" = "Linux" ] || [ "$(shell uname)" = "Darwin" ]; then \
+		sudo cp $(BINARY_NAME) /usr/local/bin/; \
+		echo "Installed to /usr/local/bin/$(BINARY_NAME)"; \
+	else \
+		echo "Manual installation required on this platform"; \
+	fi
 
-test-workflows-dry-run:
-	@echo "Dry run of workflows with act..."
-	@act --dry-run
+# Uninstall
+.PHONY: uninstall
+uninstall:
+	@echo "Uninstalling CloudBridge Client..."
+	@if [ "$(shell uname)" = "Linux" ] || [ "$(shell uname)" = "Darwin" ]; then \
+		sudo rm -f /usr/local/bin/$(BINARY_NAME); \
+		echo "Uninstalled from /usr/local/bin/$(BINARY_NAME)"; \
+	else \
+		echo "Manual uninstallation required on this platform"; \
+	fi
 
-list-workflows:
-	@echo "Listing available workflows..."
-	@act -l
+# Examples
+.PHONY: examples
+examples:
+	@echo "Building examples..."
+	go build -tags example -o examples/simple-tunnel examples/simple-tunnel.go
+	go build -tags example -o examples/p2p-mesh examples/p2p-mesh.go
+	@echo "Examples built successfully"
 
+# Development helpers
+.PHONY: dev
+dev: deps fmt lint test build examples
+	@echo "Development build complete"
+
+.PHONY: release
+release: clean deps fmt lint test build-all
+	@echo "Release build complete"
+
+# Help
+.PHONY: help
 help:
-	@echo "Targets: build build-all build-russian build-enterprise build-packages build-containers build-vm build-universal test test-race test-coverage install uninstall deps lint fmt vet security-scan bench docs release clean help"
-	@echo "Workflow testing: test-workflows test-workflows-act test-workflows-dry-run list-workflows" 
+	@echo "CloudBridge Client Build System"
+	@echo "==============================="
+	@echo ""
+	@echo "Build targets:"
+	@echo "  build              Build for current platform"
+	@echo "  build-all          Build for all platforms"
+	@echo "  build-linux        Build for Linux (amd64 + arm64)"
+	@echo "  build-windows      Build for Windows (amd64 + arm64)"
+	@echo "  build-darwin       Build for macOS (amd64 + arm64)"
+	@echo ""
+	@echo "Testing:"
+	@echo "  test               Run unit tests"
+	@echo "  test-coverage      Run tests with coverage"
+	@echo "  test-integration   Run integration tests"
+	@echo ""
+	@echo "Code quality:"
+	@echo "  lint               Run linters"
+	@echo "  fmt                Format code"
+	@echo "  fmt-check          Check code formatting"
+	@echo ""
+	@echo "Examples:"
+	@echo "  examples           Build example applications"
+	@echo ""
+	@echo "Dependencies:"
+	@echo "  deps               Download dependencies"
+	@echo "  deps-update        Update dependencies"
+	@echo ""
+	@echo "Setup:"
+	@echo "  setup-linux        Setup WireGuard on Linux"
+	@echo "  setup-windows      Show Windows setup instructions"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  clean              Clean build artifacts"
+	@echo "  install            Install binary (Linux/macOS)"
+	@echo "  uninstall          Uninstall binary (Linux/macOS)"
+	@echo ""
+	@echo "Development:"
+	@echo "  dev                Full development build"
+	@echo "  release            Full release build"
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  VERSION            Version string (default: dev)"
+	@echo "  BUILD_TYPE         Build type (default: development)"

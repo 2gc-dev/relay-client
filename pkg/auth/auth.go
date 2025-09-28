@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,39 +15,36 @@ import (
 
 // Claims represents JWT claims with tenant and P2P support
 type Claims struct {
-	Subject         string           `json:"sub"`
-	TenantID        string           `json:"tenant_id,omitempty"`
-	OrgID           string           `json:"org_id,omitempty"`
-	Permissions     []string         `json:"permissions,omitempty"`
-	ConnectionType  string           `json:"connection_type,omitempty"`
-	WireGuardConfig *WireGuardConfig `json:"wireguard_config,omitempty"`
-	MeshConfig      *MeshConfig      `json:"mesh_config,omitempty"`
-	PeerWhitelist   *PeerWhitelist   `json:"peer_whitelist,omitempty"`
-	NetworkConfig   *NetworkConfig   `json:"network_config,omitempty"`
-	Issuer          string           `json:"iss,omitempty"`
-	Audience        string           `json:"aud,omitempty"`
-	ExpiresAt       int64            `json:"exp,omitempty"`
-	IssuedAt        int64            `json:"iat,omitempty"`
-	NotBefore       int64            `json:"nbf,omitempty"`
+	Subject        string         `json:"sub"`
+	TenantID       string         `json:"tenant_id,omitempty"`
+	OrgID          string         `json:"org_id,omitempty"`
+	Permissions    []string       `json:"permissions,omitempty"`
+	ConnectionType string         `json:"connection_type,omitempty"`
+	QUICConfig     *QUICConfig    `json:"quic_config,omitempty"`
+	MeshConfig     *MeshConfig    `json:"mesh_config,omitempty"`
+	PeerWhitelist  *PeerWhitelist `json:"peer_whitelist,omitempty"`
+	NetworkConfig  *NetworkConfig `json:"network_config,omitempty"`
+	Issuer         string         `json:"iss,omitempty"`
+	Audience       string         `json:"aud,omitempty"`
+	ExpiresAt      int64          `json:"exp,omitempty"`
+	IssuedAt       int64          `json:"iat,omitempty"`
+	NotBefore      int64          `json:"nbf,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// WireGuardConfig represents WireGuard configuration from JWT
-type WireGuardConfig struct {
-	PrivateKey string   `json:"private_key"`
+// QUICConfig represents QUIC configuration from JWT
+type QUICConfig struct {
 	PublicKey  string   `json:"public_key"`
 	AllowedIPs []string `json:"allowed_ips"`
-	Endpoint   string   `json:"endpoint,omitempty"`
-	ListenPort int      `json:"listen_port,omitempty"`
-	MTU        int      `json:"mtu,omitempty"`
 }
 
 // MeshConfig represents mesh network configuration from JWT
 type MeshConfig struct {
-	AutoDiscovery bool   `json:"auto_discovery"`
-	Persistent    bool   `json:"persistent"`
-	Routing       string `json:"routing"`
-	Encryption    string `json:"encryption"`
+	AutoDiscovery     bool        `json:"auto_discovery"`
+	Persistent        bool        `json:"persistent"`
+	Routing           string      `json:"routing"`
+	Encryption        string      `json:"encryption"`
+	HeartbeatInterval interface{} `json:"heartbeat_interval"`
 }
 
 // PeerWhitelist represents peer whitelist configuration from JWT
@@ -76,6 +74,7 @@ type AuthConfig struct {
 	Type           string          `json:"type"`
 	Secret         string          `json:"secret"`
 	FallbackSecret string          `json:"fallback_secret,omitempty"`
+	SkipValidation bool            `json:"skip_validation,omitempty"`
 	Keycloak       *KeycloakConfig `json:"keycloak,omitempty"`
 }
 
@@ -116,7 +115,12 @@ func NewAuthManager(config *AuthConfig) (*AuthManager, error) {
 		if config.Secret == "" {
 			return nil, fmt.Errorf("jwt secret is required")
 		}
-		am.jwtSecret = []byte(config.Secret)
+		// Support both plain and base64-encoded secrets
+		if decoded, err := base64.StdEncoding.DecodeString(config.Secret); err == nil && len(decoded) > 0 {
+			am.jwtSecret = decoded
+		} else {
+			am.jwtSecret = []byte(config.Secret)
+		}
 
 	case "keycloak":
 		if config.Keycloak == nil {
@@ -209,29 +213,98 @@ func (am *AuthManager) ValidateToken(tokenString string) (*jwt.Token, error) {
 
 // validateJWTToken validates a JWT token with HMAC
 func (am *AuthManager) validateJWTToken(tokenString string) (*jwt.Token, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Validate algorithm
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+	// Skip validation if configured
+	if am.config.SkipValidation {
+		// Check if token has proper JWT format (3 parts)
+		parts := strings.Split(tokenString, ".")
+		if len(parts) != 3 {
+			// For development, handle non-standard JWT format
+			if len(parts) == 2 {
+				// This appears to be a non-standard format: header+payload.signature
+				// Try to decode the first part as header+payload
+				headerPayloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+				if err != nil {
+					return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("Failed to decode header+payload: %v", err))
+				}
+
+				// The first part contains both header and payload, so we need to extract the payload
+				// For now, let's assume the entire first part is the payload (claims)
+				var claims jwt.MapClaims
+				if err := json.Unmarshal(headerPayloadBytes, &claims); err != nil {
+					return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("Failed to unmarshal claims: %v", err))
+				}
+
+				// Create a mock token
+				token := &jwt.Token{
+					Raw:    tokenString,
+					Method: jwt.SigningMethodHS256,
+					Claims: claims,
+					Valid:  true,
+				}
+				return token, nil
+			}
+			return nil, errors.NewRelayError(errors.ErrInvalidToken, "token is malformed: token contains an invalid number of segments")
 		}
 
-		// Check if token has kid header and use fallback secret if available
-		if kid, ok := token.Header["kid"].(string); ok && kid == "fallback-key" && am.config.FallbackSecret != "" {
-			return []byte(am.config.FallbackSecret), nil
+		// Parse token without validation
+		parser := jwt.Parser{}
+		token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+		if err != nil {
+			return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("JWT parsing failed: %v", err))
 		}
-
-		return am.jwtSecret, nil
-	})
-
-	if err != nil {
-		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("JWT validation failed: %v", err))
+		return token, nil
 	}
 
-	if !token.Valid {
-		return nil, errors.NewRelayError(errors.ErrInvalidToken, "invalid JWT token")
+	// Prepare candidate keys based on kid and configured secrets
+	var candidates [][]byte
+
+	// Helper to append decoded and raw versions in order
+	addSecretCandidates := func(secret string) {
+		if secret == "" {
+			return
+		}
+		if decoded, err := base64.StdEncoding.DecodeString(secret); err == nil && len(decoded) > 0 {
+			candidates = append(candidates, decoded)
+		}
+		candidates = append(candidates, []byte(secret))
 	}
 
-	return token, nil
+	// If kid==fallback-key and fallback secret provided, try it first
+	{
+		// Parse header to inspect kid without verifying signature
+		parser := jwt.Parser{}
+		if unverifiedToken, _, _ := parser.ParseUnverified(tokenString, jwt.MapClaims{}); unverifiedToken != nil {
+			if kid, ok := unverifiedToken.Header["kid"].(string); ok && kid == "fallback-key" && am.config.FallbackSecret != "" {
+				addSecretCandidates(am.config.FallbackSecret)
+			}
+		}
+	}
+
+	// If no candidates yet, fall back to primary secret
+	if len(candidates) == 0 {
+		// Prefer using configured secret directly to preserve exact bytes
+		addSecretCandidates(am.config.Secret)
+	}
+
+	var lastErr error
+	for _, key := range candidates {
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validate algorithm
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return key, nil
+		})
+		if err == nil && token != nil && token.Valid {
+			return token, nil
+		}
+		lastErr = err
+	}
+
+	if lastErr != nil {
+		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("JWT validation failed: %v", lastErr))
+	}
+	return nil, errors.NewRelayError(errors.ErrInvalidToken, "invalid JWT token")
 }
 
 // validateKeycloakToken validates a Keycloak token
@@ -360,37 +433,56 @@ func (am *AuthManager) ExtractConnectionType(token *jwt.Token) (string, error) {
 		return am.determineConnectionTypeFromClaims(claims)
 	}
 
-	return connectionType, nil
+	// Map JWT connection types to P2P connection types
+	switch connectionType {
+	case "wireguard":
+		return "p2p-mesh", nil
+	case "p2p-mesh":
+		return "p2p-mesh", nil
+	case "client-server":
+		return "client-server", nil
+	case "server-server":
+		return "server-server", nil
+	default:
+		// Default to p2p-mesh for wireguard connections
+		return "p2p-mesh", nil
+	}
 }
 
-// ExtractWireGuardConfig extracts WireGuard configuration from token
-func (am *AuthManager) ExtractWireGuardConfig(token *jwt.Token) (*WireGuardConfig, error) {
+// ExtractQUICConfig extracts QUIC configuration from token
+func (am *AuthManager) ExtractQUICConfig(token *jwt.Token) (*QUICConfig, error) {
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, fmt.Errorf("invalid token claims")
 	}
 
-	wgConfig, ok := claims["wireguard_config"].(map[string]interface{})
+	quicConfig, ok := claims["quic_config"].(map[string]interface{})
 	if !ok {
-		return nil, nil // WireGuard not configured
+		// Return default QUIC config if not specified
+		return &QUICConfig{
+			PublicKey:  fmt.Sprintf("generated-quic-key-%d", time.Now().UnixNano()),
+			AllowedIPs: []string{"10.0.0.0/24"},
+		}, nil
 	}
 
-	config := &WireGuardConfig{}
-	if privateKey, ok := wgConfig["private_key"].(string); ok {
-		config.PrivateKey = privateKey
-	}
-	if publicKey, ok := wgConfig["public_key"].(string); ok {
+	config := &QUICConfig{}
+	if publicKey, ok := quicConfig["public_key"].(string); ok {
 		config.PublicKey = publicKey
 	}
-	if allowedIPs, ok := wgConfig["allowed_ips"].([]interface{}); ok {
+	if allowedIPs, ok := quicConfig["allowed_ips"].([]interface{}); ok {
 		for _, ip := range allowedIPs {
 			if ipStr, ok := ip.(string); ok {
 				config.AllowedIPs = append(config.AllowedIPs, ipStr)
 			}
 		}
 	}
-	if endpoint, ok := wgConfig["endpoint"].(string); ok {
-		config.Endpoint = endpoint
+
+	// Set defaults if not specified
+	if config.PublicKey == "" {
+		config.PublicKey = fmt.Sprintf("generated-quic-key-%d", time.Now().UnixNano())
+	}
+	if len(config.AllowedIPs) == 0 {
+		config.AllowedIPs = []string{"10.0.0.0/24"}
 	}
 
 	return config, nil
@@ -420,6 +512,9 @@ func (am *AuthManager) ExtractMeshConfig(token *jwt.Token) (*MeshConfig, error) 
 	}
 	if encryption, ok := meshConfig["encryption"].(string); ok {
 		config.Encryption = encryption
+	}
+	if heartbeatInterval, ok := meshConfig["heartbeat_interval"]; ok {
+		config.HeartbeatInterval = heartbeatInterval
 	}
 
 	return config, nil
