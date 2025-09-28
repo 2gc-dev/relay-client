@@ -100,10 +100,8 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&transportMode, "transport", "grpc", "Transport mode (grpc, json)")
 
-	// Mark required flags
-	if err := rootCmd.MarkFlagRequired("token"); err != nil {
-		log.Fatalf("Failed to mark flag as required: %v", err)
-	}
+	// Note: token flag is checked in validateFlags() function instead of marking it required
+	// This allows version and help commands to work without requiring a token
 
 	// Add subcommands
 	rootCmd.AddCommand(createP2PCommand())
