@@ -52,7 +52,7 @@ make build-windows  # Windows
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.25+
 - Valid JWT token from CloudBridge Relay
 - Network access to relay server
 

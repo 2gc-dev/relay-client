@@ -26,15 +26,14 @@ import (
 
 // Build-time variables (set via ldflags)
 var (
-	version           string = "dev"
-	buildType         string = "unknown"
-	buildOS           string = "unknown"
-	buildArch         string = "unknown"
-	buildTime         string = "unknown"
-	jwtSecret         string = ""
-	jwtFallbackSecret string = ""
-	buildApiBase      string = ""
-	buildTenantID     string = ""
+	version       string = "dev"
+	buildType     string = "unknown"
+	buildOS       string = "unknown"
+	buildArch     string = "unknown"
+	buildTime     string = "unknown"
+	jwtSecret     string = ""
+	buildApiBase  string = ""
+	buildTenantID string = ""
 )
 
 var (
