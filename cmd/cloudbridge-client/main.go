@@ -126,7 +126,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Override config with command line flags if provided
 	if token != "" {
-		cfg.Auth.Secret = token // For JWT auth, secret is the token
+		cfg.Auth.Token = token // For JWT auth, token is the JWT token
 	}
 	// API URLs are hardcoded in the code
 	if insecureSkipTLSVerify {
@@ -651,8 +651,14 @@ func runP2P(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create auth manager: %w", err)
 	}
 
+	// Get token from config or command line
+	tokenToUse := token
+	if tokenToUse == "" {
+		tokenToUse = cfg.Auth.Token
+	}
+
 	// Validate JWT token
-	validatedToken, err := authManager.ValidateToken(token)
+	validatedToken, err := authManager.ValidateToken(tokenToUse)
 	if err != nil {
 		return fmt.Errorf("failed to validate token: %w", err)
 	}
@@ -672,7 +678,7 @@ func runP2P(cmd *cobra.Command, args []string) error {
 		MaxRetries:         cfg.API.MaxRetries,
 		BackoffMultiplier:  cfg.API.BackoffMultiplier,
 		MaxBackoff:         cfg.API.MaxBackoff,
-		Token:              token,
+		Token:              tokenToUse,
 		TenantID:           p2pConfig.TenantID,
 		HeartbeatInterval:  cfg.P2P.HeartbeatInterval,
 	}
@@ -681,7 +687,7 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	p2pLogger := &p2pLogger{}
 
 	// Create P2P manager with HTTP API support
-	p2pManager := p2p.NewManagerWithAPI(p2pConfig, apiConfig, authManager, token, p2pLogger)
+	p2pManager := p2p.NewManagerWithAPI(p2pConfig, apiConfig, authManager, tokenToUse, p2pLogger)
 
 	// Start P2P mesh with retry to survive temporary relay outages
 	{

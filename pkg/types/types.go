@@ -69,6 +69,7 @@ type TLSConfig struct {
 // AuthConfig contains authentication settings
 type AuthConfig struct {
 	Type           string         `mapstructure:"type"`
+	Token          string         `mapstructure:"token"`
 	Secret         string         `mapstructure:"secret"`
 	FallbackSecret string         `mapstructure:"fallback_secret"`
 	SkipValidation bool           `mapstructure:"skip_validation"`
