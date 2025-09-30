@@ -1,16 +1,15 @@
-version: 2
-
-project_name: cloudbridge-client
+# GoReleaser configuration for CloudBridge Client
+# https://goreleaser.com/
 
 before:
   hooks:
-    - go mod tidy
     - go mod download
+    - go mod tidy
 
 builds:
   - id: cloudbridge-client
     binary: cloudbridge-client
-    main: ./cmd/cloudbridge-client/
+    main: ./cmd/cloudbridge-client
     goos:
       - linux
       - windows
@@ -18,25 +17,18 @@ builds:
     goarch:
       - amd64
       - arm64
-      - "386"
-    ignore:
-      - goos: darwin
-        goarch: "386"
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
+      - 386
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.buildTime={{.Date}}
-      - -X main.buildType=release
-      - -X main.buildOS={{.Os}}
-      - -X main.buildArch={{.Arch}}
+      - -X main.commit={{.Commit}}
+    env:
+      - CGO_ENABLED=0
 
   - id: quic-tester
     binary: quic-tester
-    main: ./cmd/quic-tester/
+    main: ./cmd/quic-tester
     goos:
       - linux
       - windows
@@ -44,45 +36,60 @@ builds:
     goarch:
       - amd64
       - arm64
-      - "386"
-    ignore:
-      - goos: darwin
-        goarch: "386"
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
+      - 386
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.buildTime={{.Date}}
-      - -X main.buildType=release
+      - -X main.commit={{.Commit}}
+    env:
+      - CGO_ENABLED=0
 
 archives:
-  - id: default
+  - id: cloudbridge-client
+    builds:
+      - cloudbridge-client
     format: tar.gz
     format_overrides:
       - goos: windows
         format: zip
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - config-example.yaml
+      - README.md
+      - LICENSE
+    name_template: "cloudbridge-client_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: quic-tester
+    builds:
+      - quic-tester
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
     files:
       - README.md
       - LICENSE
+    name_template: "quic-tester_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: full-package
+    builds:
+      - cloudbridge-client
+      - quic-tester
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
       - config-example.yaml
-      - config-production.yaml
+      - README.md
+      - LICENSE
+    name_template: "cloudbridge-client_{{ .Version }}_{{ .Os }}_{{ .Arch }}_full"
 
 checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  version_template: "{{ incpatch .Version }}-SNAPSHOT-{{ .ShortCommit }}"
-
-git:
-  # Ensure we're building from the right tag
-  ignore_tags:
-    - "*-rc*"
-    - "*-alpha*"
-    - "*-beta*"
+  name_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -90,32 +97,59 @@ changelog:
     exclude:
       - '^docs:'
       - '^test:'
-      - '^ci:'
-      - '^chore:'
-      - Merge pull request
-      - Merge branch
 
 release:
-  draft: false
-  replace_existing_draft: false
-  make_latest: true
-  name_template: "{{.ProjectName}} {{.Version}}"
+  github:
+    owner: 2gc-dev
+    name: relay-client
+  name_template: "CloudBridge Client {{ .Version }}"
   header: |
-    ## 🚀 CloudBridge Client {{.Version}}
+    ## CloudBridge Client {{ .Version }}
     
     This release includes both the main CloudBridge Client and the QUIC Tester utility.
     
-    ### 📦 Binaries Included:
+    ### Binaries Included:
     - **cloudbridge-client**: Main P2P mesh networking client
     - **quic-tester**: QUIC protocol testing utility
     
-    ### 🏗️ Supported Platforms:
-    - Linux (amd64, arm64, 386)  
+    ### Supported Platforms:
+    - Linux (amd64, arm64, 386)
     - Windows (amd64, arm64, 386)
     - macOS (amd64, arm64)
     
-    ### 📋 Installation:
+    ### Installation:
     1. Download the appropriate archive for your platform
     2. Extract the binaries
     3. Copy `config-example.yaml` to `config.yaml` and configure
     4. Run `./cloudbridge-client --help` for usage instructions
+    
+    ## Changelog
+  footer: |
+    ## Installation Instructions
+    
+    ### Linux/macOS:
+    ```bash
+    # Download and extract
+    tar -xzf cloudbridge-client_*_linux_amd64.tar.gz
+    chmod +x cloudbridge-client
+    ./cloudbridge-client --help
+    ```
+    
+    ### Windows:
+    ```cmd
+    # Download and extract
+    # Run cloudbridge-client.exe --help
+    ```
+
+dockers:
+  - image_templates:
+      - "ghcr.io/2gc-dev/cloudbridge-client:{{ .Version }}"
+      - "ghcr.io/2gc-dev/cloudbridge-client:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - --label=org.opencontainers.image.title=CloudBridge Client
+      - --label=org.opencontainers.image.description=P2P mesh networking client
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.revision={{ .Commit }}
+      - --label=org.opencontainers.image.source=https://github.com/2gc-dev/relay-client
