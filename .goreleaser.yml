@@ -141,15 +141,9 @@ release:
     # Run cloudbridge-client.exe --help
     ```
 
-dockers:
-  - image_templates:
-      - "ghcr.io/2gc-dev/cloudbridge-client:{{ .Version }}"
-      - "ghcr.io/2gc-dev/cloudbridge-client:latest"
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - --label=org.opencontainers.image.title=CloudBridge Client
-      - --label=org.opencontainers.image.description=P2P mesh networking client
-      - --label=org.opencontainers.image.version={{ .Version }}
-      - --label=org.opencontainers.image.created={{ .Date }}
-      - --label=org.opencontainers.image.revision={{ .Commit }}
-      - --label=org.opencontainers.image.source=https://github.com/2gc-dev/relay-client
+# Docker builds disabled - no Dockerfile present
+# dockers:
+#   - image_templates:
+#       - "ghcr.io/2gc-dev/cloudbridge-client:{{ .Version }}"
+#       - "ghcr.io/2gc-dev/cloudbridge-client:latest"
+#     dockerfile: Dockerfile
