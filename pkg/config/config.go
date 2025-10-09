@@ -57,17 +57,17 @@ func LoadConfig(configPath string) (*types.Config, error) {
 
 // setDefaults sets default configuration values
 func setDefaults() {
-	// Relay configuration
-	viper.SetDefault("relay.host", "b1.2gc.space") // Новый домен через CDN
-	viper.SetDefault("relay.port", 9091)
-	viper.SetDefault("relay.ports.http_api", 8083)
-	viper.SetDefault("relay.ports.p2p_api", 8083)
-	viper.SetDefault("relay.ports.quic", 9091)
-	viper.SetDefault("relay.ports.stun", 19302)
-	viper.SetDefault("relay.ports.masque", 8443)
-	viper.SetDefault("relay.ports.enhanced_quic", 9092)
-	viper.SetDefault("relay.ports.turn", 3478)
-	viper.SetDefault("relay.ports.derp", 3479)
+	// Relay configuration - синхронизировано с реальными портами edge.2gc.ru
+	viper.SetDefault("relay.host", "edge.2gc.ru")       // Реальный домен
+	viper.SetDefault("relay.port", 8082)                // Реально открытый P2P API порт
+	viper.SetDefault("relay.ports.http_api", 8082)      // P2P API через nginx
+	viper.SetDefault("relay.ports.p2p_api", 8082)       // P2P API прямой доступ
+	viper.SetDefault("relay.ports.quic", 9090)          // QUIC Transport
+	viper.SetDefault("relay.ports.stun", 19302)         // STUN Server (реально открыт)
+	viper.SetDefault("relay.ports.masque", 8443)        // MASQUE Proxy через nginx
+	viper.SetDefault("relay.ports.enhanced_quic", 9092) // Enhanced QUIC (реально открыт)
+	viper.SetDefault("relay.ports.turn", 3478)          // TURN Server
+	viper.SetDefault("relay.ports.derp", 3479)          // DERP Server
 	viper.SetDefault("relay.timeout", "30s")
 	// Enable TLS by default for secure communications
 	viper.SetDefault("relay.tls.enabled", true)
@@ -102,20 +102,20 @@ func setDefaults() {
 	viper.SetDefault("metrics.pushgateway.instance", "")
 	viper.SetDefault("metrics.pushgateway.push_interval", "30s")
 
-	// API configuration - hardcoded URLs (development HTTP)
-	viper.SetDefault("api.base_url", "http://edge.2gc.ru:8083")
-	viper.SetDefault("api.p2p_api_url", "http://edge.2gc.ru:8083")
-	viper.SetDefault("api.heartbeat_url", "http://edge.2gc.ru:8083")
-	viper.SetDefault("api.insecure_skip_verify", false)
+	// API configuration - синхронизировано с edge.2gc.ru
+	viper.SetDefault("api.base_url", "https://edge.2gc.ru")      // HTTPS основной домен
+	viper.SetDefault("api.p2p_api_url", "https://edge.2gc.ru")   // P2P API через основной домен
+	viper.SetDefault("api.heartbeat_url", "https://edge.2gc.ru") // Heartbeat через основной домен
+	viper.SetDefault("api.insecure_skip_verify", false)          // Проверять SSL сертификаты
 	viper.SetDefault("api.timeout", "30s")
 	viper.SetDefault("api.max_retries", 3)
 	viper.SetDefault("api.backoff_multiplier", 2.0)
 	viper.SetDefault("api.max_backoff", "60s")
 
-	// ICE configuration
-	viper.SetDefault("ice.stun_servers", []string{"localhost:19302"})
-	viper.SetDefault("ice.turn_servers", []string{"localhost:3478"})
-	viper.SetDefault("ice.derp_servers", []string{"localhost:3479"})
+	// ICE configuration - синхронизировано с реальными серверами
+	viper.SetDefault("ice.stun_servers", []string{"edge.2gc.ru:19302", "stun.l.google.com:19302"})
+	viper.SetDefault("ice.turn_servers", []string{"edge.2gc.ru:3478"})
+	viper.SetDefault("ice.derp_servers", []string{"edge.2gc.ru:3479"})
 	viper.SetDefault("ice.timeout", "30s")
 	viper.SetDefault("ice.max_binding_requests", 7)
 	viper.SetDefault("ice.connectivity_checks", true)

@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/2gc-dev/cloudbridge-client/pkg/api"
@@ -167,12 +165,8 @@ func run(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	if runtime.GOOS == types.PlatformWindows {
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	} else {
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	}
+	// Use the utility function for cross-platform signal handling
+	sigChan := utils.SetupSignalHandler()
 
 	// Start connection with retry logic
 	if err := connectWithRetry(client); err != nil {
@@ -202,11 +196,12 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Printf("Heartbeat started")
+	log.Printf("Press Ctrl+C to stop the client gracefully")
 
 	// Wait for shutdown signal
 	select {
 	case <-sigChan:
-		log.Println("Received shutdown signal, closing...")
+		log.Println("Received shutdown signal (Ctrl+C), closing gracefully...")
 	case <-ctx.Done():
 		log.Println("Context canceled, closing...")
 	}
@@ -627,12 +622,8 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	if runtime.GOOS == types.PlatformWindows {
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	} else {
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	}
+	// Use the utility function for cross-platform signal handling
+	sigChan := utils.SetupSignalHandler()
 
 	// Create authentication manager for JWT validation
 	authManager, err := auth.NewAuthManager(&auth.AuthConfig{
@@ -714,11 +705,12 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	}()
 
 	log.Printf("P2P mesh started successfully")
+	log.Printf("Press Ctrl+C to stop the client gracefully")
 
 	// Wait for shutdown signal
 	select {
 	case <-sigChan:
-		log.Println("Received shutdown signal, closing...")
+		log.Println("Received shutdown signal (Ctrl+C), closing gracefully...")
 	case <-ctx.Done():
 		log.Println("Context canceled, closing...")
 	}
@@ -755,12 +747,8 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	if runtime.GOOS == types.PlatformWindows {
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	} else {
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	}
+	// Use the utility function for cross-platform signal handling
+	sigChan := utils.SetupSignalHandler()
 
 	// Connect to relay server
 	if err := connectWithRetry(client); err != nil {
@@ -790,11 +778,12 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Printf("Heartbeat started")
+	log.Printf("Press Ctrl+C to stop the client gracefully")
 
 	// Wait for shutdown signal
 	select {
 	case <-sigChan:
-		log.Println("Received shutdown signal, closing...")
+		log.Println("Received shutdown signal (Ctrl+C), closing gracefully...")
 	case <-ctx.Done():
 		log.Println("Context canceled, closing...")
 	}
