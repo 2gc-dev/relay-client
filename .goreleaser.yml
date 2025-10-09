@@ -26,25 +26,6 @@ builds:
     env:
       - CGO_ENABLED=0
 
-  - id: quic-tester
-    binary: quic-tester
-    main: ./cmd/quic-tester
-    goos:
-      - linux
-      - windows
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-      - 386
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.buildTime={{.Date}}
-      - -X main.commit={{.Commit}}
-    env:
-      - CGO_ENABLED=0
-
 archives:
   - id: cloudbridge-client
     builds:
@@ -54,36 +35,10 @@ archives:
       - goos: windows
         format: zip
     files:
-      - config-example.yaml
+      - config.yaml
       - README.md
       - LICENSE
     name_template: "cloudbridge-client_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-
-  - id: quic-tester
-    builds:
-      - quic-tester
-    format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - README.md
-      - LICENSE
-    name_template: "quic-tester_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-
-  - id: full-package
-    builds:
-      - cloudbridge-client
-      - quic-tester
-    format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - config-example.yaml
-      - README.md
-      - LICENSE
-    name_template: "cloudbridge-client_{{ .Version }}_{{ .Os }}_{{ .Arch }}_full"
 
 checksum:
   name_template: 'checksums.txt'
@@ -106,11 +61,10 @@ release:
   header: |
     ## CloudBridge Client {{ .Version }}
     
-    This release includes both the main CloudBridge Client and the QUIC Tester utility.
+    This release includes the main CloudBridge Client for P2P mesh networking.
     
     ### Binaries Included:
     - **cloudbridge-client**: Main P2P mesh networking client
-    - **quic-tester**: QUIC protocol testing utility
     
     ### Supported Platforms:
     - Linux (amd64, arm64, 386)
@@ -120,7 +74,7 @@ release:
     ### Installation:
     1. Download the appropriate archive for your platform
     2. Extract the binaries
-    3. Copy `config-example.yaml` to `config.yaml` and configure
+    3. Copy `config.yaml` and configure
     4. Run `./cloudbridge-client --help` for usage instructions
     
     ## Changelog
