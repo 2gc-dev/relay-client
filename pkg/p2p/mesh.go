@@ -3,6 +3,8 @@ package p2p
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,12 +24,23 @@ type MeshNetwork struct {
 type MeshRouter struct {
 	routingTable map[string][]string // destination -> route
 	latencyTable map[string]int64    // destination -> latency
+	ownerIndex   map[string]string   // destination -> ownerPeerID
 	mu           sync.RWMutex
 }
 
 // NewMeshNetwork creates a new mesh network manager
 func NewMeshNetwork(config *MeshConfig, logger Logger) *MeshNetwork {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Нормализуем конфигурацию с дефолтами
+	config.FillDefaults()
+
+	logger.Info("Creating mesh network",
+		"routing", config.Routing,
+		"encryption", config.Encryption,
+		"topology_interval", config.TopologyInterval,
+		"routing_interval", config.RoutingInterval,
+		"health_interval", config.HealthInterval)
 
 	return &MeshNetwork{
 		config: config,
@@ -40,6 +53,7 @@ func NewMeshNetwork(config *MeshConfig, logger Logger) *MeshNetwork {
 		router: &MeshRouter{
 			routingTable: make(map[string][]string),
 			latencyTable: make(map[string]int64),
+			ownerIndex:   make(map[string]string),
 		},
 		ctx:    ctx,
 		cancel: cancel,
@@ -51,6 +65,11 @@ func NewMeshNetwork(config *MeshConfig, logger Logger) *MeshNetwork {
 func (mn *MeshNetwork) Start() error {
 	mn.mu.Lock()
 	defer mn.mu.Unlock()
+
+	// Валидируем конфигурацию перед стартом
+	if err := mn.validateConfig(); err != nil {
+		return fmt.Errorf("invalid mesh configuration: %w", err)
+	}
 
 	mn.logger.Info("Starting mesh network", "routing", mn.config.Routing, "encryption", mn.config.Encryption)
 
@@ -68,14 +87,14 @@ func (mn *MeshNetwork) Start() error {
 	return nil
 }
 
-// Stop stops the mesh network
+// Stop stops the mesh network (идемпотентный)
 func (mn *MeshNetwork) Stop() error {
 	mn.mu.Lock()
 	defer mn.mu.Unlock()
 
 	mn.logger.Info("Stopping mesh network")
 
-	// Cancel context to stop all goroutines
+	// Cancel context to stop all goroutines (горутины завершатся по ctx.Done())
 	mn.cancel()
 
 	mn.logger.Info("Mesh network stopped")
@@ -150,25 +169,72 @@ func (mn *MeshNetwork) AddPeer(peer *Peer) error {
 	return nil
 }
 
-// RemovePeer removes a peer from the mesh network
+// SetLocalPeerID устанавливает ID локального пира
+func (mn *MeshNetwork) SetLocalPeerID(id string) {
+	mn.mu.Lock()
+	defer mn.mu.Unlock()
+	mn.topology.LocalPeerID = id
+	mn.logger.Info("Local peer ID set", "peer_id", id)
+}
+
+// UpsertPeer добавляет или обновляет пира в mesh сети
+func (mn *MeshNetwork) UpsertPeer(peer *Peer) {
+	mn.mu.Lock()
+	defer mn.mu.Unlock()
+
+	if p, ok := mn.topology.ConnectedPeers[peer.ID]; ok {
+		// merge: обновляем только «живые» поля
+		if peer.Endpoint != "" {
+			p.Endpoint = peer.Endpoint
+		}
+		if peer.PublicKey != "" {
+			p.PublicKey = peer.PublicKey
+		}
+		if peer.Latency > 0 {
+			p.Latency = peer.Latency
+		}
+		if len(peer.AllowedIPs) > 0 {
+			p.AllowedIPs = peer.AllowedIPs
+		}
+		p.IsConnected = peer.IsConnected
+		p.LastSeen = time.Now().Unix()
+		_ = mn.updateRoutingForPeer(p)
+		mn.logger.Debug("Updated existing peer", "peer_id", peer.ID)
+	} else {
+		peer.LastSeen = time.Now().Unix()
+		mn.topology.ConnectedPeers[peer.ID] = peer
+		_ = mn.updateRoutingForPeer(peer)
+		mn.logger.Info("Added new peer", "peer_id", peer.ID)
+	}
+}
+
+// UpdatePeerLatency обновляет латентность пира
+func (mn *MeshNetwork) UpdatePeerLatency(peerID string, latency int64) {
+	mn.mu.Lock()
+	defer mn.mu.Unlock()
+
+	if p, ok := mn.topology.ConnectedPeers[peerID]; ok {
+		p.Latency = latency
+		mn.router.mu.Lock()
+		mn.router.latencyTable[peerID] = latency
+		mn.router.mu.Unlock()
+		mn.logger.Debug("Updated peer latency", "peer_id", peerID, "latency", latency)
+	}
+}
+
+// RemovePeer удаляет пира из mesh сети
 func (mn *MeshNetwork) RemovePeer(peerID string) error {
 	mn.mu.Lock()
 	defer mn.mu.Unlock()
 
-	mn.logger.Info("Removing peer from mesh network", "peer_id", peerID)
-
-	// Remove from connected peers
-	if _, exists := mn.topology.ConnectedPeers[peerID]; exists {
-		delete(mn.topology.ConnectedPeers, peerID)
-
-		// Update routing table
-		mn.removeRoutingForPeer(peerID)
-
-		mn.logger.Info("Peer removed from mesh network successfully", "peer_id", peerID)
-		return nil
+	if _, exists := mn.topology.ConnectedPeers[peerID]; !exists {
+		return fmt.Errorf("peer not found: %s", peerID)
 	}
 
-	return fmt.Errorf("peer not found: %s", peerID)
+	delete(mn.topology.ConnectedPeers, peerID)
+	mn.removeRoutingForPeer(peerID)
+	mn.logger.Info("Peer removed from mesh", "peer_id", peerID)
+	return nil
 }
 
 // GetOptimalRoute returns the optimal route to a destination
@@ -249,18 +315,20 @@ func (mn *MeshNetwork) updateRoutingForPeer(peer *Peer) error {
 	// Add direct route to the peer
 	mn.router.routingTable[peer.ID] = []string{peer.ID}
 	mn.router.latencyTable[peer.ID] = peer.Latency
+	mn.router.ownerIndex[peer.ID] = peer.ID
 
 	// Add routes to the peer's allowed IPs
 	for _, allowedIP := range peer.AllowedIPs {
 		mn.router.routingTable[allowedIP] = []string{peer.ID}
 		mn.router.latencyTable[allowedIP] = peer.Latency
+		mn.router.ownerIndex[allowedIP] = peer.ID
 	}
 
 	mn.logger.Debug("Updated routing for peer", "peer_id", peer.ID, "allowed_ips", peer.AllowedIPs)
 	return nil
 }
 
-// removeRoutingForPeer removes routing entries when a peer is removed
+// removeRoutingForPeer removes routing entries when a peer is removed (O(1) через ownerIndex)
 func (mn *MeshNetwork) removeRoutingForPeer(peerID string) {
 	mn.router.mu.Lock()
 	defer mn.router.mu.Unlock()
@@ -268,12 +336,14 @@ func (mn *MeshNetwork) removeRoutingForPeer(peerID string) {
 	// Remove direct route to the peer
 	delete(mn.router.routingTable, peerID)
 	delete(mn.router.latencyTable, peerID)
+	delete(mn.router.ownerIndex, peerID)
 
-	// Remove routes to the peer's allowed IPs
-	for dest, route := range mn.router.routingTable {
-		if len(route) > 0 && route[0] == peerID {
+	// Remove all destinations owned by this peer (быстро через ownerIndex)
+	for dest, owner := range mn.router.ownerIndex {
+		if owner == peerID {
 			delete(mn.router.routingTable, dest)
 			delete(mn.router.latencyTable, dest)
+			delete(mn.router.ownerIndex, dest)
 		}
 	}
 
@@ -282,7 +352,7 @@ func (mn *MeshNetwork) removeRoutingForPeer(peerID string) {
 
 // topologyUpdateLoop continuously updates the mesh topology
 func (mn *MeshNetwork) topologyUpdateLoop() {
-	ticker := time.NewTicker(30 * time.Second) // Update topology every 30 seconds
+	ticker := time.NewTicker(mn.config.TopologyInterval)
 	defer ticker.Stop()
 
 	for {
@@ -297,7 +367,7 @@ func (mn *MeshNetwork) topologyUpdateLoop() {
 
 // routingUpdateLoop continuously updates routing information
 func (mn *MeshNetwork) routingUpdateLoop() {
-	ticker := time.NewTicker(60 * time.Second) // Update routing every minute
+	ticker := time.NewTicker(mn.config.RoutingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -312,7 +382,7 @@ func (mn *MeshNetwork) routingUpdateLoop() {
 
 // healthCheckLoop performs health checks on mesh connections
 func (mn *MeshNetwork) healthCheckLoop() {
-	ticker := time.NewTicker(2 * time.Minute) // Health check every 2 minutes
+	ticker := time.NewTicker(mn.config.HealthInterval)
 	defer ticker.Stop()
 
 	for {
@@ -330,12 +400,17 @@ func (mn *MeshNetwork) updateTopology() {
 	mn.mu.Lock()
 	defer mn.mu.Unlock()
 
+	stale := mn.config.PeerStaleAfter
+	now := time.Now()
+
 	// Update topology based on current peer status
 	for id, peer := range mn.topology.ConnectedPeers {
 		// Check if peer is still responsive
-		if time.Since(time.Unix(peer.LastSeen, 0)) > 5*time.Minute {
-			peer.IsConnected = false
-			mn.logger.Warn("Peer appears to be unresponsive", "peer_id", id)
+		if time.Since(time.Unix(peer.LastSeen, 0)) > stale {
+			if peer.IsConnected {
+				peer.IsConnected = false
+				mn.logger.Warn("Peer became stale", "peer_id", id, "since", now.Sub(time.Unix(peer.LastSeen, 0)))
+			}
 		}
 	}
 
@@ -369,31 +444,59 @@ func (mn *MeshNetwork) updateRouting() {
 // performHealthChecks performs health checks on all mesh connections
 func (mn *MeshNetwork) performHealthChecks() {
 	mn.mu.RLock()
-	peers := make(map[string]*Peer)
-	for id, peer := range mn.topology.ConnectedPeers {
-		peers[id] = peer
+	peers := make(map[string]*Peer, len(mn.topology.ConnectedPeers))
+	for id, p := range mn.topology.ConnectedPeers {
+		peers[id] = p
 	}
 	mn.mu.RUnlock()
 
+	dead := mn.config.PeerDeadAfter
 	for id, peer := range peers {
-		// Perform health check (simplified)
-		if time.Since(time.Unix(peer.LastSeen, 0)) > 10*time.Minute {
-			mn.logger.Warn("Peer failed health check", "peer_id", id)
-			// In a real implementation, you might want to remove the peer
+		// Perform health check with configurable threshold
+		if time.Since(time.Unix(peer.LastSeen, 0)) > dead {
+			mn.logger.Warn("Peer failed health check", "peer_id", id, "since", time.Since(time.Unix(peer.LastSeen, 0)))
+			// Опционально: автоснос
+			// _ = mn.RemovePeer(id)
 		}
 	}
 }
 
-// findAlternativeRoute finds an alternative route to a destination
+// ipInCIDR проверяет, попадает ли IP в CIDR
+func ipInCIDR(ipStr, cidr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	_, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false
+	}
+	return n.Contains(ip)
+}
+
+// IsIPInTenantSubnet проверяет, принадлежит ли IP к тенантной подсети
+func (mn *MeshNetwork) IsIPInTenantSubnet(ip string, tenantSubnet string) bool {
+	if tenantSubnet == "" {
+		return false
+	}
+	return ipInCIDR(ip, tenantSubnet)
+}
+
+// findAlternativeRoute finds an alternative route to a destination (CIDR-совместимый)
 func (mn *MeshNetwork) findAlternativeRoute(destination, excludePeerID string) []string {
-	// Simple implementation: find any other connected peer
+	// Если destination — IP, попробуем найти владельца по CIDR
 	for id, peer := range mn.topology.ConnectedPeers {
-		if id != excludePeerID && peer.IsConnected {
-			// Check if this peer can reach the destination
-			for _, allowedIP := range peer.AllowedIPs {
-				if allowedIP == destination {
-					return []string{id}
-				}
+		if id == excludePeerID || !peer.IsConnected {
+			continue
+		}
+		for _, allowed := range peer.AllowedIPs {
+			// точное совпадение
+			if allowed == destination {
+				return []string{id}
+			}
+			// CIDR
+			if strings.Contains(allowed, "/") && ipInCIDR(destination, allowed) {
+				return []string{id}
 			}
 		}
 	}
@@ -428,4 +531,36 @@ func (mn *MeshNetwork) GetMeshStats() map[string]interface{} {
 		"average_latency":  avgLatency,
 		"routes":           len(mn.router.routingTable),
 	}
+}
+
+// validateConfig валидирует конфигурацию mesh сети
+func (mn *MeshNetwork) validateConfig() error {
+	// Проверяем routing тип
+	switch mn.config.Routing {
+	case RoutingHybrid, RoutingDirect, RoutingRelay, "":
+		// ok
+	default:
+		return fmt.Errorf("invalid routing type: %q", mn.config.Routing)
+	}
+
+	// Проверяем encryption тип
+	switch mn.config.Encryption {
+	case EncryptionQUIC, EncryptionTLS, "":
+		// ok
+	default:
+		return fmt.Errorf("invalid encryption type: %q", mn.config.Encryption)
+	}
+
+	// Проверяем тайминги
+	if mn.config.TopologyInterval <= 0 {
+		return fmt.Errorf("topology interval must be positive: %v", mn.config.TopologyInterval)
+	}
+	if mn.config.RoutingInterval <= 0 {
+		return fmt.Errorf("routing interval must be positive: %v", mn.config.RoutingInterval)
+	}
+	if mn.config.HealthInterval <= 0 {
+		return fmt.Errorf("health interval must be positive: %v", mn.config.HealthInterval)
+	}
+
+	return nil
 }

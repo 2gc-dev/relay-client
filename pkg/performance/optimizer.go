@@ -1,7 +1,10 @@
 package performance
 
 import (
+	"os"
 	"runtime"
+	"runtime/debug"
+	"strconv"
 	"time"
 )
 
@@ -12,50 +15,56 @@ type Optimizer struct {
 
 // NewOptimizer creates a new performance optimizer
 func NewOptimizer(enabled bool) *Optimizer {
-	return &Optimizer{
-		enabled: enabled,
-	}
+	return &Optimizer{enabled: enabled}
 }
 
-// OptimizeForHighThroughput optimizes the system for high throughput
+// OptimizeForHighThroughput tunes runtime for higher throughput.
+// Heuristics:
+// - Use all CPUs
+// - Relax GC to reduce GC CPU overhead (GOGC ~ 200)
+// - No artificial ballast (prefer memory limit if needed)
 func (o *Optimizer) OptimizeForHighThroughput() {
 	if !o.enabled {
 		return
 	}
-
-	// Set GOMAXPROCS to use all available CPU cores
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	// Enable memory ballast for better GC performance
-	// This allocates a large block of memory that the GC can use
-	_ = make([]byte, 1<<30) // 1GB ballast
+	// Higher GOGC => larger heap, fewer collections => better throughput
+	_ = debug.SetGCPercent(200)
+	// Keep default memory limit (no hard cap). Users can override via SetMemoryLimit.
 }
 
-// OptimizeForLowLatency optimizes the system for low latency
+// OptimizeForLowLatency tunes runtime for lower latency.
+// Heuristics:
+// - Use all CPUs
+// - Slightly tighter GC to keep heap smaller and reduce background GC debt (GOGC ~ 75)
+// - Optional memory ceiling can be applied via SetMemoryLimit by caller
 func (o *Optimizer) OptimizeForLowLatency() {
 	if !o.enabled {
 		return
 	}
-
-	// Set GOMAXPROCS to use all available CPU cores
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	// Disable memory ballast for lower memory usage
-	runtime.GC()
+	// Lower GOGC => more frequent GC, smaller heap; in practice Go pauses малы,
+	// но такой режим снижает риск burst-реструктуризаций под нагрузкой
+	_ = debug.SetGCPercent(75)
 }
 
-// SetGCPercent sets the garbage collection percentage
+// SetGCPercent sets GOGC (% growth over live heap before next GC).
+// Use values like 50 (more frequent GC), 100 (default), 200+ (fewer collections).
 func (o *Optimizer) SetGCPercent(percent int) {
 	if !o.enabled {
 		return
 	}
+	_ = debug.SetGCPercent(percent)
+}
 
-	runtime.GC()
-	debug := runtime.MemStats{}
-	runtime.ReadMemStats(&debug)
-
-	// Set GC percentage (lower = more aggressive GC)
-	runtime.GC()
+// SetMemoryLimit sets a soft memory limit for the Go runtime (bytes).
+// Pass -1 to clear the limit. Requires Go 1.19+.
+func (o *Optimizer) SetMemoryLimit(bytes int64) {
+	if !o.enabled {
+		return
+	}
+	// If bytes < 0, SetMemoryLimit(-1) clears the limit (restore default).
+	debug.SetMemoryLimit(bytes)
 }
 
 // GetPerformanceStats returns current performance statistics
@@ -73,23 +82,86 @@ func (o *Optimizer) GetPerformanceStats() map[string]interface{} {
 		"memory_heap_alloc":  m.HeapAlloc,
 		"memory_heap_sys":    m.HeapSys,
 		"gc_cycles":          m.NumGC,
-		"gc_pause_total":     m.PauseTotalNs,
+		"gc_pause_total_ns":  m.PauseTotalNs,
+		// NB: debug.ReadGCStats deprecated; MemStats достаточно для базового мониторинга
 	}
 }
 
-// MonitorPerformance starts performance monitoring
-func (o *Optimizer) MonitorPerformance(interval time.Duration, callback func(map[string]interface{})) {
+// MonitorPerformance starts periodic performance reporting.
+// Returns a stop func that cancels monitoring.
+func (o *Optimizer) MonitorPerformance(interval time.Duration, callback func(map[string]interface{})) (stop func()) {
 	if !o.enabled {
-		return
+		return func() {}
 	}
 
+	stopCh := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-
-		for range ticker.C {
-			stats := o.GetPerformanceStats()
-			callback(stats)
+		for {
+			select {
+			case <-ticker.C:
+				callback(o.GetPerformanceStats())
+			case <-stopCh:
+				return
+			}
 		}
 	}()
+	return func() { close(stopCh) }
+}
+
+// NewOptimizerWithEnv creates a new optimizer with settings from environment variables
+func NewOptimizerWithEnv(enabled bool) *Optimizer {
+	optimizer := NewOptimizer(enabled)
+
+	if !enabled {
+		return optimizer
+	}
+
+	// Apply GOMEMLIMIT from environment
+	if memLimit := os.Getenv("GOMEMLIMIT"); memLimit != "" {
+		if bytes, err := parseMemoryLimit(memLimit); err == nil {
+			optimizer.SetMemoryLimit(bytes)
+		}
+	}
+
+	// Apply GOGC from environment
+	if gogc := os.Getenv("GOGC"); gogc != "" {
+		if percent, err := strconv.Atoi(gogc); err == nil && percent > 0 {
+			optimizer.SetGCPercent(percent)
+		}
+	}
+
+	return optimizer
+}
+
+// parseMemoryLimit parses memory limit from environment variable
+// Supports formats like "1G", "512M", "1024K", "1048576" (bytes)
+func parseMemoryLimit(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+
+	// Handle numeric values (bytes)
+	if bytes, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return bytes, nil
+	}
+
+	// Handle suffixes
+	suffix := s[len(s)-1]
+	value, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	switch suffix {
+	case 'G', 'g':
+		return value * 1024 * 1024 * 1024, nil
+	case 'M', 'm':
+		return value * 1024 * 1024, nil
+	case 'K', 'k':
+		return value * 1024, nil
+	default:
+		return 0, nil
+	}
 }

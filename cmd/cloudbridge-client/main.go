@@ -105,6 +105,7 @@ func main() {
 	rootCmd.AddCommand(createP2PCommand())
 	rootCmd.AddCommand(createTunnelCommand())
 	rootCmd.AddCommand(createServiceCommand())
+	rootCmd.AddCommand(createWireGuardCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -388,6 +389,209 @@ func createServiceCommand() *cobra.Command {
 	svcCmd.AddCommand(statusCmd)
 
 	return svcCmd
+}
+
+// createWireGuardCommand creates the WireGuard subcommand
+func createWireGuardCommand() *cobra.Command {
+	wgCmd := &cobra.Command{
+		Use:   "wireguard",
+		Short: "Manage WireGuard L3-overlay network",
+		Long:  "Get WireGuard configuration for L3-overlay network",
+	}
+
+	// Get config command
+	getConfigCmd := &cobra.Command{
+		Use:   "config",
+		Short: "Get WireGuard configuration",
+		Long:  "Get WireGuard client configuration for L3-overlay network",
+		RunE:  runWireGuardConfig,
+	}
+
+	// Status command
+	statusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Check WireGuard status",
+		Long:  "Check WireGuard L3-overlay network status",
+		RunE:  runWireGuardStatus,
+	}
+
+	wgCmd.AddCommand(getConfigCmd)
+	wgCmd.AddCommand(statusCmd)
+
+	return wgCmd
+}
+
+// runWireGuardConfig gets WireGuard configuration
+func runWireGuardConfig(cmd *cobra.Command, args []string) error {
+	log.Printf("Getting WireGuard configuration for L3-overlay network...")
+
+	// Load configuration
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Get token from config or command line
+	tokenToUse := token
+	if tokenToUse == "" {
+		tokenToUse = cfg.Auth.Token
+	}
+
+	if tokenToUse == "" {
+		return fmt.Errorf("JWT token is required (use --token flag or set auth.token in config)")
+	}
+
+	// Create authentication manager
+	authManager, err := auth.NewAuthManager(&auth.AuthConfig{
+		Type:           cfg.Auth.Type,
+		Secret:         cfg.Auth.Secret,
+		FallbackSecret: cfg.Auth.FallbackSecret,
+		SkipValidation: cfg.Auth.SkipValidation,
+		Keycloak: &auth.KeycloakConfig{
+			ServerURL: cfg.Auth.Keycloak.ServerURL,
+			Realm:     cfg.Auth.Keycloak.Realm,
+			ClientID:  cfg.Auth.Keycloak.ClientID,
+			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create auth manager: %w", err)
+	}
+
+	// Validate JWT token
+	validatedToken, err := authManager.ValidateToken(tokenToUse)
+	if err != nil {
+		return fmt.Errorf("failed to validate token: %w", err)
+	}
+
+	// Extract P2P configuration from JWT token
+	p2pConfig, err := p2p.ExtractP2PConfigFromToken(authManager, validatedToken)
+	if err != nil {
+		return fmt.Errorf("failed to extract P2P config from token: %w", err)
+	}
+
+	// Create API manager configuration
+	apiConfig := &api.ManagerConfig{
+		BaseURL:            cfg.API.BaseURL,
+		InsecureSkipVerify: cfg.API.InsecureSkipVerify,
+		Timeout:            cfg.API.Timeout,
+		MaxRetries:         cfg.API.MaxRetries,
+		BackoffMultiplier:  cfg.API.BackoffMultiplier,
+		MaxBackoff:         cfg.API.MaxBackoff,
+		Token:              tokenToUse,
+		TenantID:           p2pConfig.TenantID,
+		HeartbeatInterval:  30 * time.Second,
+	}
+
+	// Create P2P logger
+	p2pLogger := &p2pLogger{}
+
+	// Create P2P manager with HTTP API support
+	p2pManager := p2p.NewManagerWithAPI(p2pConfig, apiConfig, authManager, tokenToUse, p2pLogger)
+
+	// Get WireGuard configuration
+	config, err := p2pManager.GetWireGuardConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get WireGuard config: %w", err)
+	}
+
+	// Display configuration
+	fmt.Printf("WireGuard Configuration:\n")
+	fmt.Printf("=======================\n")
+	fmt.Printf("Success: %t\n", config.Success)
+	fmt.Printf("Message: %s\n", config.Message)
+	fmt.Printf("Peer IP: %s\n", config.PeerIP)
+	fmt.Printf("Tenant CIDR: %s\n", config.TenantCIDR)
+	fmt.Printf("\nClient Configuration:\n")
+	fmt.Printf("---------------------\n")
+	fmt.Printf("%s\n", config.ClientConfig)
+
+	return nil
+}
+
+// runWireGuardStatus checks WireGuard status
+func runWireGuardStatus(cmd *cobra.Command, args []string) error {
+	log.Printf("Checking WireGuard L3-overlay network status...")
+
+	// Load configuration
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Get token from config or command line
+	tokenToUse := token
+	if tokenToUse == "" {
+		tokenToUse = cfg.Auth.Token
+	}
+
+	if tokenToUse == "" {
+		return fmt.Errorf("JWT token is required (use --token flag or set auth.token in config)")
+	}
+
+	// Create authentication manager
+	authManager, err := auth.NewAuthManager(&auth.AuthConfig{
+		Type:           cfg.Auth.Type,
+		Secret:         cfg.Auth.Secret,
+		FallbackSecret: cfg.Auth.FallbackSecret,
+		SkipValidation: cfg.Auth.SkipValidation,
+		Keycloak: &auth.KeycloakConfig{
+			ServerURL: cfg.Auth.Keycloak.ServerURL,
+			Realm:     cfg.Auth.Keycloak.Realm,
+			ClientID:  cfg.Auth.Keycloak.ClientID,
+			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create auth manager: %w", err)
+	}
+
+	// Validate JWT token
+	validatedToken, err := authManager.ValidateToken(tokenToUse)
+	if err != nil {
+		return fmt.Errorf("failed to validate token: %w", err)
+	}
+
+	// Extract P2P configuration from JWT token
+	p2pConfig, err := p2p.ExtractP2PConfigFromToken(authManager, validatedToken)
+	if err != nil {
+		return fmt.Errorf("failed to extract P2P config from token: %w", err)
+	}
+
+	// Create API manager configuration
+	apiConfig := &api.ManagerConfig{
+		BaseURL:            cfg.API.BaseURL,
+		InsecureSkipVerify: cfg.API.InsecureSkipVerify,
+		Timeout:            cfg.API.Timeout,
+		MaxRetries:         cfg.API.MaxRetries,
+		BackoffMultiplier:  cfg.API.BackoffMultiplier,
+		MaxBackoff:         cfg.API.MaxBackoff,
+		Token:              tokenToUse,
+		TenantID:           p2pConfig.TenantID,
+		HeartbeatInterval:  30 * time.Second,
+	}
+
+	// Create P2P logger
+	p2pLogger := &p2pLogger{}
+
+	// Create P2P manager with HTTP API support
+	p2pManager := p2p.NewManagerWithAPI(p2pConfig, apiConfig, authManager, tokenToUse, p2pLogger)
+
+	// Get status
+	status := p2pManager.GetStatus()
+
+	// Display status
+	fmt.Printf("WireGuard L3-overlay Network Status:\n")
+	fmt.Printf("====================================\n")
+	fmt.Printf("L3 Overlay Ready: %t\n", status.L3OverlayReady)
+	fmt.Printf("WireGuard Ready: %t\n", status.WireGuardReady)
+	fmt.Printf("Peer IP: %s\n", status.PeerIP)
+	fmt.Printf("Tenant CIDR: %s\n", status.TenantCIDR)
+	fmt.Printf("Connection Type: %s\n", status.ConnectionType)
+	fmt.Printf("Mesh Enabled: %t\n", status.MeshEnabled)
+	fmt.Printf("Active Connections: %d\n", status.ActiveConnections)
+
+	return nil
 }
 
 // runServiceInstall installs the service
@@ -705,6 +909,20 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	}()
 
 	log.Printf("P2P mesh started successfully")
+	
+	// Check L3-overlay network status
+	if p2pManager.IsL3OverlayReady() {
+		log.Printf("L3-overlay network ready: Peer IP=%s, Tenant CIDR=%s", 
+			p2pManager.GetPeerIP(), p2pManager.GetTenantCIDR())
+		
+		// Display WireGuard configuration
+		if config := p2pManager.GetWireGuardConfigString(); config != "" {
+			log.Printf("WireGuard configuration available (length: %d chars)", len(config))
+		}
+	} else {
+		log.Printf("L3-overlay network not ready yet")
+	}
+	
 	log.Printf("Press Ctrl+C to stop the client gracefully")
 
 	// Wait for shutdown signal

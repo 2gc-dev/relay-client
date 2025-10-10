@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/2gc-dev/cloudbridge-client/pkg/errors"
@@ -67,6 +69,13 @@ type AuthManager struct {
 	jwtSecret  []byte
 	publicKey  *rsa.PublicKey
 	httpClient *http.Client
+
+	// JWKS support for Keycloak
+	jwksURL     string
+	jwksKeys    map[string]*rsa.PublicKey // kid -> key
+	jwksFetched time.Time
+	jwksTTL     time.Duration
+	mu          sync.RWMutex
 }
 
 // AuthConfig contains authentication configuration
@@ -126,6 +135,9 @@ func NewAuthManager(config *AuthConfig) (*AuthManager, error) {
 		if config.Keycloak == nil {
 			return nil, fmt.Errorf("keycloak configuration is required")
 		}
+		// Initialize JWKS support
+		am.jwksTTL = 5 * time.Minute
+		am.jwksKeys = make(map[string]*rsa.PublicKey)
 		if err := am.setupKeycloak(); err != nil {
 			return nil, fmt.Errorf("failed to setup keycloak: %w", err)
 		}
@@ -140,37 +152,21 @@ func NewAuthManager(config *AuthConfig) (*AuthManager, error) {
 // setupKeycloak initializes Keycloak authentication
 func (am *AuthManager) setupKeycloak() error {
 	if am.config.Keycloak.JWKSURL == "" {
-		am.config.Keycloak.JWKSURL = fmt.Sprintf(
+		am.jwksURL = fmt.Sprintf(
 			"%s/realms/%s/protocol/openid-connect/certs",
 			am.config.Keycloak.ServerURL,
 			am.config.Keycloak.Realm,
 		)
+	} else {
+		am.jwksURL = am.config.Keycloak.JWKSURL
 	}
 
-	// Fetch JWKS
-	jwks, err := am.fetchJWKS()
-	if err != nil {
-		return fmt.Errorf("failed to fetch jwks: %w", err)
-	}
-
-	// Convert first key to RSA public key
-	if len(jwks.Keys) == 0 {
-		return fmt.Errorf("no keys found in jwks")
-	}
-
-	key := jwks.Keys[0]
-	publicKey, err := am.jwkToRSAPublicKey(key)
-	if err != nil {
-		return fmt.Errorf("failed to convert jwk to RSA public key: %w", err)
-	}
-
-	am.publicKey = publicKey
-	return nil
+	return am.refreshJWKS() // первичная загрузка
 }
 
 // fetchJWKS fetches JSON Web Key Set from Keycloak
 func (am *AuthManager) fetchJWKS() (*JWKS, error) {
-	resp, err := am.httpClient.Get(am.config.Keycloak.JWKSURL)
+	resp, err := am.httpClient.Get(am.jwksURL)
 	if err != nil {
 		return nil, err
 	}
@@ -194,9 +190,83 @@ func (am *AuthManager) fetchJWKS() (*JWKS, error) {
 
 // jwkToRSAPublicKey converts JWK to RSA public key
 func (am *AuthManager) jwkToRSAPublicKey(jwk JWK) (*rsa.PublicKey, error) {
-	// This is a simplified implementation
-	// In production, you should use a proper JWK library
-	return nil, fmt.Errorf("JWK to RSA conversion not implemented")
+	if jwk.Kty != "RSA" {
+		return nil, fmt.Errorf("unsupported kty: %s", jwk.Kty)
+	}
+
+	// N и E — base64url без padding
+	nb, err := base64.RawURLEncoding.DecodeString(jwk.N)
+	if err != nil {
+		return nil, fmt.Errorf("decode N: %w", err)
+	}
+	eb, err := base64.RawURLEncoding.DecodeString(jwk.E)
+	if err != nil {
+		return nil, fmt.Errorf("decode E: %w", err)
+	}
+
+	// E — big-endian без знака
+	var eInt int
+	for _, b := range eb {
+		eInt = (eInt << 8) | int(b)
+	}
+	if eInt == 0 {
+		// по умолчанию обычно 65537
+		eInt = 65537
+	}
+
+	n := new(big.Int).SetBytes(nb)
+	return &rsa.PublicKey{N: n, E: eInt}, nil
+}
+
+// refreshJWKS загружает и кеширует JWKS ключи
+func (am *AuthManager) refreshJWKS() error {
+	jwks, err := am.fetchJWKS()
+	if err != nil {
+		return err
+	}
+	keys := make(map[string]*rsa.PublicKey, len(jwks.Keys))
+	for _, k := range jwks.Keys {
+		pk, err := am.jwkToRSAPublicKey(k)
+		if err != nil {
+			continue
+		}
+		if k.Kid != "" {
+			keys[k.Kid] = pk
+		}
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("no usable RSA keys in JWKS")
+	}
+	am.mu.Lock()
+	am.jwksKeys = keys
+	am.jwksFetched = time.Now()
+	am.mu.Unlock()
+	return nil
+}
+
+// getKeyForToken получает ключ для токена по kid
+func (am *AuthManager) getKeyForToken(token *jwt.Token) (*rsa.PublicKey, error) {
+	kid, _ := token.Header["kid"].(string)
+	am.mu.RLock()
+	key := am.jwksKeys[kid]
+	fetched := am.jwksFetched
+	ttl := am.jwksTTL
+	am.mu.RUnlock()
+
+	if key != nil && time.Since(fetched) < ttl {
+		return key, nil
+	}
+	// Обновим JWKS и попробуем ещё раз:
+	if err := am.refreshJWKS(); err != nil {
+		return nil, fmt.Errorf("refresh jwks: %w", err)
+	}
+	am.mu.RLock()
+	key = am.jwksKeys[kid]
+	am.mu.RUnlock()
+	if key == nil {
+		return nil, fmt.Errorf("kid %q not found in JWKS", kid)
+	}
+	return key, nil
 }
 
 // ValidateToken validates a JWT token
@@ -213,46 +283,15 @@ func (am *AuthManager) ValidateToken(tokenString string) (*jwt.Token, error) {
 
 // validateJWTToken validates a JWT token with HMAC
 func (am *AuthManager) validateJWTToken(tokenString string) (*jwt.Token, error) {
-	// Skip validation if configured
+	// Skip validation if configured (DEV MODE ONLY)
 	if am.config.SkipValidation {
-		// Check if token has proper JWT format (3 parts)
-		parts := strings.Split(tokenString, ".")
-		if len(parts) != 3 {
-			// For development, handle non-standard JWT format
-			if len(parts) == 2 {
-				// This appears to be a non-standard format: header+payload.signature
-				// Try to decode the first part as header+payload
-				headerPayloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-				if err != nil {
-					return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("Failed to decode header+payload: %v", err))
-				}
-
-				// The first part contains both header and payload, so we need to extract the payload
-				// For now, let's assume the entire first part is the payload (claims)
-				var claims jwt.MapClaims
-				if err := json.Unmarshal(headerPayloadBytes, &claims); err != nil {
-					return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("Failed to unmarshal claims: %v", err))
-				}
-
-				// Create a mock token
-				token := &jwt.Token{
-					Raw:    tokenString,
-					Method: jwt.SigningMethodHS256,
-					Claims: claims,
-					Valid:  true,
-				}
-				return token, nil
-			}
-			return nil, errors.NewRelayError(errors.ErrInvalidToken, "token is malformed: token contains an invalid number of segments")
-		}
-
-		// Parse token without validation
 		parser := jwt.Parser{}
-		token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+		tok, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
 		if err != nil {
-			return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("JWT parsing failed: %v", err))
+			return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("JWT parsing failed (skip mode): %v", err))
 		}
-		return token, nil
+		tok.Valid = false // подчёркиваем, что подпись не проверена
+		return tok, nil
 	}
 
 	// Prepare candidate keys based on kid and configured secrets
@@ -309,45 +348,84 @@ func (am *AuthManager) validateJWTToken(tokenString string) (*jwt.Token, error) 
 
 // validateKeycloakToken validates a Keycloak token
 func (am *AuthManager) validateKeycloakToken(tokenString string) (*jwt.Token, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Validate algorithm
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return am.publicKey, nil
-	})
+	parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}), jwt.WithIssuedAt())
+	claims := jwt.MapClaims{} // или jwt.RegisteredClaims, если хотите строгую схему
 
+	token, err := parser.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return am.getKeyForToken(t)
+	})
 	if err != nil {
 		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("keycloak token validation failed: %v", err))
 	}
-
 	if !token.Valid {
 		return nil, errors.NewRelayError(errors.ErrInvalidToken, "Invalid Keycloak token")
 	}
 
-	// Validate claims
+	// Дополнительная валидация
 	if err := am.validateKeycloakClaims(token.Claims); err != nil {
 		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("Invalid claims: %v", err))
 	}
-
 	return token, nil
 }
 
 // validateKeycloakClaims validates Keycloak-specific claims
 func (am *AuthManager) validateKeycloakClaims(claims jwt.Claims) error {
-	// Validate issuer
-	if issuer, ok := claims.(jwt.MapClaims)["iss"]; ok { //nolint:errcheck
-		expectedIssuer := fmt.Sprintf("%s/realms/%s", am.config.Keycloak.ServerURL, am.config.Keycloak.Realm)
-		if issuer != expectedIssuer {
-			return fmt.Errorf("invalid issuer: expected %s, got %s", expectedIssuer, issuer)
-		}
+	mc, ok := claims.(jwt.MapClaims)
+	if !ok {
+		return fmt.Errorf("invalid claims type")
 	}
 
-	// Validate audience
-	if aud, ok := claims.(jwt.MapClaims)["aud"]; ok { //nolint:errcheck
-		if aud != am.config.Keycloak.ClientID {
-			return fmt.Errorf("invalid audience: expected %s, got %s", am.config.Keycloak.ClientID, aud)
+	// Leeway 60s
+	now := time.Now().Unix()
+	if exp, ok := mc["exp"].(float64); ok && now > int64(exp)+60 {
+		return fmt.Errorf("token expired")
+	}
+	if nbf, ok := mc["nbf"].(float64); ok && now+60 < int64(nbf) {
+		return fmt.Errorf("token not yet valid")
+	}
+
+	// iss
+	if issuer, ok := mc["iss"].(string); ok {
+		expected := fmt.Sprintf("%s/realms/%s", am.config.Keycloak.ServerURL, am.config.Keycloak.Realm)
+		expected = strings.TrimRight(expected, "/")
+		if strings.TrimRight(issuer, "/") != expected {
+			return fmt.Errorf("invalid issuer: expected %s, got %s", expected, issuer)
 		}
+	} else {
+		return fmt.Errorf("issuer not present")
+	}
+
+	// aud (string or []string)
+	wantAud := am.config.Keycloak.ClientID
+	switch v := mc["aud"].(type) {
+	case string:
+		if v != wantAud {
+			return fmt.Errorf("invalid audience: expected %s, got %s", wantAud, v)
+		}
+	case []interface{}:
+		ok := false
+		for _, x := range v {
+			if s, _ := x.(string); s == wantAud {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return fmt.Errorf("invalid audience: %s not in %v", wantAud, v)
+		}
+	case []string: // на всякий
+		ok := false
+		for _, s := range v {
+			if s == wantAud {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return fmt.Errorf("invalid audience: %s not in %v", wantAud, v)
+		}
+	default:
+		return fmt.Errorf("invalid audience claim type")
 	}
 
 	return nil

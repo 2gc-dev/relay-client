@@ -47,6 +47,20 @@ type PeerRegistrationResponse struct {
 	Message        string `json:"message,omitempty"`
 }
 
+// ICECredentialsRequest represents ICE credentials exchange request
+type ICECredentialsRequest struct {
+	Ufrag string `json:"ufrag"`
+	Pwd   string `json:"pwd"`
+}
+
+// ICECredentialsResponse represents ICE credentials exchange response
+type ICECredentialsResponse struct {
+	Success bool   `json:"success"`
+	Ufrag   string `json:"ufrag"`
+	Pwd     string `json:"pwd"`
+	Error   string `json:"error,omitempty"`
+}
+
 // PeerStatusRequest represents a peer status update request
 type PeerStatusRequest struct {
 	RelaySessionID string                 `json:"relay_session_id"`
@@ -275,6 +289,8 @@ func (c *Client) doRequest(ctx context.Context, method, url, token string, reqBo
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
+	req.Header.Set("User-Agent", "CloudBridge-Relay-Client/1.0.0")
 
 	c.logger.Debug("Making HTTP request", "method", method, "url", url)
 
@@ -427,4 +443,82 @@ func (c *Client) SendHeartbeat(ctx context.Context, tenantID, peerID, token stri
 	}
 
 	return &heartbeatResp, nil
+}
+
+// ExchangeICECredentials обменивается ICE credentials с сервером
+func (c *Client) ExchangeICECredentials(ctx context.Context, token, tenantID, peerID string, req *ICECredentialsRequest) (*ICECredentialsResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/%s/ice-credentials", c.baseURL, tenantID, peerID)
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal ICE credentials request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ICE credentials request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
+	httpReq.Header.Set("User-Agent", "CloudBridge-Relay-Client/1.0.0")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send ICE credentials request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ICE credentials response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ICE credentials request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var iceResp ICECredentialsResponse
+	if err := json.Unmarshal(body, &iceResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ICE credentials response: %w", err)
+	}
+
+	return &iceResp, nil
+}
+
+// GetICECredentials получает ICE credentials от другого пира
+func (c *Client) GetICECredentials(ctx context.Context, token, tenantID, targetPeerID string) (*ICECredentialsResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/tenants/%s/peers/%s/ice-credentials", c.baseURL, tenantID, targetPeerID)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create get ICE credentials request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
+	httpReq.Header.Set("User-Agent", "CloudBridge-Relay-Client/1.0.0")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send get ICE credentials request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read get ICE credentials response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get ICE credentials request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var iceResp ICECredentialsResponse
+	if err := json.Unmarshal(body, &iceResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal get ICE credentials response: %w", err)
+	}
+
+	return &iceResp, nil
 }

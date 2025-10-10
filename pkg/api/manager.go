@@ -31,6 +31,7 @@ type Manager struct {
 	running           bool
 	sessionID         string
 	hbStopCh          chan struct{}
+	startTime         time.Time
 }
 
 // ManagerConfig represents the API manager configuration
@@ -49,6 +50,11 @@ type ManagerConfig struct {
 
 // NewManager creates a new HTTP API manager
 func NewManager(cfg *ManagerConfig, authManager *auth.AuthManager, logger Logger) *Manager {
+	// Валидируем конфигурацию
+	if err := validateManagerConfig(cfg); err != nil {
+		logger.Warn("Invalid API manager configuration", "error", err)
+	}
+
 	apiConfig := &ClientConfig{
 		BaseURL:            cfg.BaseURL,
 		HeartbeatURL:       cfg.HeartbeatURL,
@@ -86,6 +92,9 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("manager is already running")
 	}
 
+	// Initialize start time for uptime calculation
+	m.startTime = time.Now()
+
 	// Register peer first
 	if err := m.registerPeer(); err != nil {
 		return fmt.Errorf("failed to register peer: %w", err)
@@ -114,6 +123,11 @@ func (m *Manager) Start() error {
 	go m.startHeartbeat()
 
 	// Start connection heartbeat to relay status (every 20-30s)
+	// Protect against artifacts from previous runs
+	if m.hbStopCh != nil {
+		close(m.hbStopCh)
+		m.hbStopCh = nil
+	}
 	m.hbStopCh = make(chan struct{})
 	go func(sessionID string) {
 		ticker := time.NewTicker(25 * time.Second)
@@ -157,6 +171,7 @@ func (m *Manager) Stop() {
 	if m.sessionID != "" {
 		if m.hbStopCh != nil {
 			close(m.hbStopCh)
+			m.hbStopCh = nil
 		}
 		closeReq := &ConnectionRequest{
 			TenantID:  m.tenantID,
@@ -201,6 +216,11 @@ func (m *Manager) GetToken() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.token
+}
+
+// GetClient returns the underlying HTTP client
+func (m *Manager) GetClient() *Client {
+	return m.client
 }
 
 // DiscoverPeers discovers peers in the tenant
@@ -317,7 +337,13 @@ func (m *Manager) RegisterPeerWith(publicKey string, allowedIPs []string) error 
 
 // startHeartbeat starts the heartbeat mechanism
 func (m *Manager) startHeartbeat() {
-	ticker := time.NewTicker(m.heartbeatInterval)
+	// Set default heartbeat interval if not configured
+	interval := m.heartbeatInterval
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
@@ -335,6 +361,19 @@ func (m *Manager) startHeartbeat() {
 				if consecutiveFailures >= 3 {
 					m.logger.Warn("Heartbeat failing consecutively; attempting re-registration and session reopen")
 
+					// Close old session if exists
+					oldSession := m.sessionID
+					if oldSession != "" {
+						closeReq := &ConnectionRequest{
+							TenantID:  m.tenantID,
+							PeerID:    m.peerID,
+							SessionID: oldSession,
+							Protocol:  "tcp",
+						}
+						_ = m.client.CloseConnection(m.ctx, m.token, closeReq)
+						m.logger.Debug("Closed old session", "old_session", oldSession)
+					}
+
 					if err := m.registerPeer(); err != nil {
 						m.logger.Error("Re-registration failed", "error", err)
 					} else {
@@ -345,6 +384,9 @@ func (m *Manager) startHeartbeat() {
 							PeerID:    m.peerID,
 							SessionID: m.sessionID,
 							Protocol:  "tcp",
+							Meta: map[string]interface{}{
+								"reopened_after": oldSession,
+							},
 						}
 						if err := m.client.OpenConnection(m.ctx, m.token, openReq); err != nil {
 							m.logger.Warn("Failed to reopen relay connection after re-registration", "error", err)
@@ -381,7 +423,7 @@ func (m *Manager) sendHeartbeat() error {
 		Status:         "active",
 		Metrics: map[string]interface{}{
 			"timestamp": time.Now().Unix(),
-			"uptime":    time.Since(time.Now()).Seconds(), // This should be actual uptime
+			"uptime":    time.Since(m.startTime).Seconds(), // Correct uptime calculation
 		},
 	}
 
@@ -419,6 +461,7 @@ func (m *Manager) postJSONRequest(endpoint string, request, response interface{}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+m.token)
+	httpReq.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
 
 	resp, err := m.client.httpClient.Do(httpReq)
 	if err != nil {
@@ -546,4 +589,27 @@ func (m *Manager) SendHeartbeat(ctx context.Context, tenantID, peerID, token str
 	}
 
 	return &heartbeatResp, nil
+}
+
+// validateManagerConfig валидирует конфигурацию API Manager
+func validateManagerConfig(cfg *ManagerConfig) error {
+	if cfg.BaseURL == "" {
+		return fmt.Errorf("base URL is required")
+	}
+	if cfg.TenantID == "" {
+		return fmt.Errorf("tenant ID is required")
+	}
+	if cfg.Timeout <= 0 {
+		return fmt.Errorf("timeout must be positive: %v", cfg.Timeout)
+	}
+	if cfg.MaxRetries < 0 {
+		return fmt.Errorf("max retries must be non-negative: %d", cfg.MaxRetries)
+	}
+	if cfg.BackoffMultiplier <= 0 {
+		return fmt.Errorf("backoff multiplier must be positive: %v", cfg.BackoffMultiplier)
+	}
+	if cfg.MaxBackoff <= 0 {
+		return fmt.Errorf("max backoff must be positive: %v", cfg.MaxBackoff)
+	}
+	return nil
 }

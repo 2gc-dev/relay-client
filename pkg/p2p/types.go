@@ -1,6 +1,10 @@
 package p2p
 
-import "time"
+import (
+	"fmt"
+	"net"
+	"time"
+)
 
 // ConnectionType represents the type of P2P connection
 type ConnectionType string
@@ -29,6 +33,12 @@ type MeshConfig struct {
 	Routing           string      `json:"routing"`    // "hybrid", "direct", "relay"
 	Encryption        string      `json:"encryption"` // "quic", "tls"
 	HeartbeatInterval interface{} `json:"heartbeat_interval"`
+	// Новые поля для конфигурируемых таймингов
+	TopologyInterval time.Duration `json:"topology_interval"`
+	RoutingInterval  time.Duration `json:"routing_interval"`
+	HealthInterval   time.Duration `json:"health_interval"`
+	PeerStaleAfter   time.Duration `json:"peer_stale_after"`
+	PeerDeadAfter    time.Duration `json:"peer_dead_after"`
 }
 
 // PeerWhitelist represents peer whitelist configuration from JWT
@@ -95,6 +105,11 @@ type P2PStatus struct {
 	ICEReady          bool           `json:"ice_ready"`
 	ActiveConnections int            `json:"active_connections"`
 	LastError         string         `json:"last_error,omitempty"`
+	// L3-overlay network status
+	L3OverlayReady bool   `json:"l3_overlay_ready"`
+	PeerIP         string `json:"peer_ip,omitempty"`
+	TenantCIDR     string `json:"tenant_cidr,omitempty"`
+	WireGuardReady bool   `json:"wireguard_ready"`
 }
 
 // P2PMessage represents a P2P protocol message
@@ -153,4 +168,144 @@ type MeshRouteResponse struct {
 	Type    string   `json:"type"`
 	Route   []string `json:"route"`
 	Latency int64    `json:"latency_ms"`
+}
+
+// --- helpers & validation ---
+
+// Routing / Encryption enums (не ломают текущие строки, служат справочником)
+const (
+	RoutingHybrid = "hybrid"
+	RoutingDirect = "direct"
+	RoutingRelay  = "relay"
+
+	EncryptionQUIC = "quic"
+	EncryptionTLS  = "tls"
+)
+
+// Valid проверяет корректность типа соединения
+func (ct ConnectionType) Valid() bool {
+	switch ct {
+	case ConnectionTypeClientServer, ConnectionTypeServerServer, ConnectionTypeP2PMesh:
+		return true
+	default:
+		return false
+	}
+}
+
+// FillDefaults нормализует P2PConfig дефолтами (ничего не перезатирает, если уже задано)
+func (c *P2PConfig) FillDefaults() {
+	if c.HeartbeatInterval <= 0 {
+		// разумный дефолт для клиентской стороны
+		c.HeartbeatInterval = 30 * time.Second
+	}
+	if c.HeartbeatTimeout <= 0 {
+		c.HeartbeatTimeout = 10 * time.Second
+	}
+
+	if c.MeshConfig != nil {
+		c.MeshConfig.FillDefaults()
+	}
+	if c.NetworkConfig != nil {
+		c.NetworkConfig.FillDefaults()
+	}
+	if !c.ConnectionType.Valid() {
+		// дефолт к p2p-mesh для L3 overlay
+		c.ConnectionType = ConnectionTypeP2PMesh
+	}
+}
+
+// FillDefaults нормализует MeshConfig
+func (m *MeshConfig) FillDefaults() {
+	if m.Routing == "" {
+		m.Routing = RoutingHybrid
+	}
+	if m.Encryption == "" {
+		m.Encryption = EncryptionQUIC
+	}
+	// HeartbeatInterval может быть строкой "30s", числом (ms) или nil
+	if d, ok := ParseFlexibleDuration(m.HeartbeatInterval); ok {
+		m.HeartbeatInterval = d
+	}
+}
+
+// FillDefaults нормализует NetworkConfig
+func (n *NetworkConfig) FillDefaults() {
+	if n.MTU == 0 {
+		n.MTU = 1420
+	}
+	// Порты полезны для авто-дискавери/диагностики
+	if n.QUICPort == 0 {
+		n.QUICPort = 5553
+	}
+	if n.ICEPort == 0 {
+		n.ICEPort = 19302
+	}
+}
+
+// ParseFlexibleDuration парсит duration из string ("30s"), float64/int (миллисекунды) или time.Duration
+// Возвращает (duration, true) при успехе.
+func ParseFlexibleDuration(v interface{}) (time.Duration, bool) {
+	if v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case time.Duration:
+		return t, true
+	case string:
+		if t == "" {
+			return 0, false
+		}
+		if d, err := time.ParseDuration(t); err == nil {
+			return d, true
+		}
+	case float64:
+		// часто приходит из JSON как float64 миллисекунд
+		return time.Duration(int64(t)) * time.Millisecond, true
+	case int:
+		return time.Duration(t) * time.Millisecond, true
+	case int64:
+		return time.Duration(t) * time.Millisecond, true
+	case uint64:
+		return time.Duration(int64(t)) * time.Millisecond, true
+	}
+	return 0, false
+}
+
+// ContainsIP сообщает, входит ли ip (строка) в Subnet (CIDR) данной NetworkConfig.
+// Возвращает false, если Subnet пустой или некорректный.
+func (n *NetworkConfig) ContainsIP(ip string) bool {
+	if n == nil || n.Subnet == "" {
+		return false
+	}
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	_, cidr, err := net.ParseCIDR(n.Subnet)
+	if err != nil || cidr == nil {
+		return false
+	}
+	return cidr.Contains(parsedIP)
+}
+
+// Validate базовая валидация конфигурации (для раннего fail-fast)
+func (c *P2PConfig) Validate() error {
+	if !c.ConnectionType.Valid() {
+		return fmt.Errorf("invalid connection_type: %q", c.ConnectionType)
+	}
+	if c.MeshConfig != nil {
+		switch c.MeshConfig.Routing {
+		case RoutingHybrid, RoutingDirect, RoutingRelay, "":
+			// ok
+		default:
+			return fmt.Errorf("invalid mesh.routing: %q", c.MeshConfig.Routing)
+		}
+		switch c.MeshConfig.Encryption {
+		case EncryptionQUIC, EncryptionTLS, "":
+			// ok
+		default:
+			return fmt.Errorf("invalid mesh.encryption: %q", c.MeshConfig.Encryption)
+		}
+	}
+	return nil
 }

@@ -23,9 +23,11 @@ type PushgatewayConfig struct {
 
 // Metrics represents the metrics system
 type Metrics struct {
-	enabled bool
-	port    int
-	server  *http.Server
+	enabled  bool
+	running  bool
+	port     int
+	server   *http.Server
+	registry *prometheus.Registry
 
 	// Pushgateway support
 	pushgatewayConfig *PushgatewayConfig
@@ -34,13 +36,12 @@ type Metrics struct {
 	pushCancel        context.CancelFunc
 	pushMutex         sync.RWMutex
 
-	// Required client metrics
-	clientBytesSent prometheus.Counter
-	clientBytesRecv prometheus.Counter
-	p2pSessions     prometheus.Gauge
-	transportMode   prometheus.Gauge
+	// Required client metrics (объединены в одну метрику)
+	clientBytes   *prometheus.CounterVec
+	p2pSessions   prometheus.Gauge
+	transportMode prometheus.Gauge
 
-	// Prometheus metrics
+	// Prometheus metrics (без tunnel_id для снижения кардинальности)
 	bytesTransferred   *prometheus.CounterVec
 	connectionsHandled *prometheus.CounterVec
 	activeConnections  *prometheus.GaugeVec
@@ -85,19 +86,16 @@ func NewMetricsWithPushgateway(enabled bool, port int, pushConfig *PushgatewayCo
 
 // initPrometheusMetrics initializes Prometheus metrics
 func (m *Metrics) initPrometheusMetrics() {
-	// Required client metrics for Pushgateway
-	m.clientBytesSent = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "client_bytes_sent",
-			Help: "Total bytes sent by client",
-		},
-	)
+	// Создаем собственный registry для избежания паники при повторной инициализации
+	m.registry = prometheus.NewRegistry()
 
-	m.clientBytesRecv = prometheus.NewCounter(
+	// Required client metrics (объединены в одну метрику)
+	m.clientBytes = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "client_bytes_recv",
-			Help: "Total bytes received by client",
+			Name: "cloudbridge_client_bytes_total",
+			Help: "Total bytes by client",
 		},
+		[]string{"direction"}, // sent/recv
 	)
 
 	m.p2pSessions = prometheus.NewGauge(
@@ -114,84 +112,83 @@ func (m *Metrics) initPrometheusMetrics() {
 		},
 	)
 
-	// Bytes transferred counter
+	// Bytes transferred counter (без tunnel_id для снижения кардинальности)
 	m.bytesTransferred = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cloudbridge_bytes_transferred_total",
 			Help: "Total bytes transferred through tunnels",
 		},
-		[]string{"tunnel_id", "tenant_id", "direction"},
+		[]string{"tenant_id", "direction"}, // убрали tunnel_id
 	)
 
-	// Connections handled counter
+	// Connections handled counter (без tunnel_id)
 	m.connectionsHandled = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cloudbridge_connections_handled_total",
 			Help: "Total connections handled by tunnels",
 		},
-		[]string{"tunnel_id", "tenant_id"},
+		[]string{"tenant_id"}, // убрали tunnel_id
 	)
 
-	// Active connections gauge
+	// Active connections gauge (без tunnel_id)
 	m.activeConnections = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "cloudbridge_active_connections",
 			Help: "Number of active connections",
 		},
-		[]string{"tunnel_id", "tenant_id"},
+		[]string{"tenant_id"}, // убрали tunnel_id
 	)
 
-	// Connection duration histogram
+	// Connection duration histogram (без tunnel_id, настроенные buckets)
 	m.connectionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "cloudbridge_connection_duration_seconds",
 			Help:    "Connection duration in seconds",
-			Buckets: prometheus.DefBuckets,
+			Buckets: []float64{0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30}, // сетевые длительности
 		},
-		[]string{"tunnel_id", "tenant_id"},
+		[]string{"tenant_id"}, // убрали tunnel_id
 	)
 
-	// Buffer pool size gauge
+	// Buffer pool size gauge (без tunnel_id)
 	m.bufferPoolSize = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "cloudbridge_buffer_pool_size",
 			Help: "Buffer pool size",
 		},
-		[]string{"tunnel_id"},
+		[]string{}, // убрали tunnel_id
 	)
 
-	// Buffer pool usage gauge
+	// Buffer pool usage gauge (без tunnel_id)
 	m.bufferPoolUsage = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "cloudbridge_buffer_pool_usage",
 			Help: "Buffer pool usage",
 		},
-		[]string{"tunnel_id"},
+		[]string{}, // убрали tunnel_id
 	)
 
-	// Errors total counter
+	// Errors total counter (без tunnel_id)
 	m.errorsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cloudbridge_errors_total",
 			Help: "Total number of errors",
 		},
-		[]string{"error_type", "tunnel_id", "tenant_id"},
+		[]string{"error_type", "tenant_id"}, // убрали tunnel_id
 	)
 
-	// Heartbeat latency histogram
+	// Heartbeat latency histogram (настроенные buckets)
 	m.heartbeatLatency = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "cloudbridge_heartbeat_latency_seconds",
 			Help:    "Heartbeat latency in seconds",
-			Buckets: prometheus.DefBuckets,
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}, // сетевые задержки
 		},
 		[]string{"tenant_id"},
 	)
 
-	// Register metrics
-	prometheus.MustRegister(
-		m.clientBytesSent,
-		m.clientBytesRecv,
+	// Регистрируем метрики в собственном registry
+	m.registry.MustRegister(
+		m.clientBytes,
 		m.p2pSessions,
 		m.transportMode,
 		m.bytesTransferred,
@@ -211,13 +208,12 @@ func (m *Metrics) initPushgateway() {
 		return
 	}
 
-	// Create pusher
+	// Create pusher с собственным registry
 	m.pusher = push.New(m.pushgatewayConfig.URL, m.pushgatewayConfig.JobName).
-		Grouping("instance", m.pushgatewayConfig.Instance).
-		Collector(m.clientBytesSent).
-		Collector(m.clientBytesRecv).
-		Collector(m.p2pSessions).
-		Collector(m.transportMode)
+		Grouping("instance", m.pushgatewayConfig.Instance)
+
+	// Добавляем все метрики из registry в pusher
+	// TODO: После стабилизации API добавить Gathering(m.registry)
 
 	// Start push context
 	m.pushCtx, m.pushCancel = context.WithCancel(context.Background())
@@ -298,21 +294,28 @@ func (m *Metrics) Start() error {
 		return nil
 	}
 
+	// Защита от повторного запуска
+	if m.running {
+		return fmt.Errorf("metrics server already started")
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	// Используем собственный registry
+	mux.Handle("/metrics", promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{}))
 
 	m.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", m.port),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", m.port), // Безопасность: только localhost
 		Handler: mux,
 	}
 
+	m.running = true
 	go func() {
 		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Metrics server error: %v\n", err)
 		}
 	}()
 
-	fmt.Printf("Metrics server started on port %d\n", m.port)
+	fmt.Printf("Metrics server started on 127.0.0.1:%d\n", m.port)
 	return nil
 }
 
@@ -324,75 +327,84 @@ func (m *Metrics) Stop() error {
 		m.pushCancel()
 		m.pushCancel = nil // Prevent double cancel
 	}
+
+	// Удаляем метрики из Pushgateway при остановке
+	if m.pusher != nil {
+		_ = m.pusher.Delete() // best-effort удаление зомби-инстанса
+	}
 	m.pushMutex.Unlock()
 
+	// Graceful shutdown HTTP server
 	if m.server != nil {
-		return m.server.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		m.running = false
+		return m.server.Shutdown(ctx)
 	}
 	return nil
 }
 
 // RecordBytesTransferred records bytes transferred
-func (m *Metrics) RecordBytesTransferred(tunnelID, tenantID, direction string, bytes int64) {
+func (m *Metrics) RecordBytesTransferred(tenantID, direction string, bytes int64) {
 	if !m.enabled {
 		return
 	}
 
-	m.bytesTransferred.WithLabelValues(tunnelID, tenantID, direction).Add(float64(bytes))
+	m.bytesTransferred.WithLabelValues(tenantID, direction).Add(float64(bytes))
 }
 
 // RecordConnectionHandled records a handled connection
-func (m *Metrics) RecordConnectionHandled(tunnelID, tenantID string) {
+func (m *Metrics) RecordConnectionHandled(tenantID string) {
 	if !m.enabled {
 		return
 	}
 
-	m.connectionsHandled.WithLabelValues(tunnelID, tenantID).Inc()
+	m.connectionsHandled.WithLabelValues(tenantID).Inc()
 }
 
 // SetActiveConnections sets active connections count
-func (m *Metrics) SetActiveConnections(tunnelID, tenantID string, count int) {
+func (m *Metrics) SetActiveConnections(tenantID string, count int) {
 	if !m.enabled {
 		return
 	}
 
-	m.activeConnections.WithLabelValues(tunnelID, tenantID).Set(float64(count))
+	m.activeConnections.WithLabelValues(tenantID).Set(float64(count))
 }
 
 // RecordConnectionDuration records connection duration
-func (m *Metrics) RecordConnectionDuration(tunnelID, tenantID string, duration time.Duration) {
+func (m *Metrics) RecordConnectionDuration(tenantID string, duration time.Duration) {
 	if !m.enabled {
 		return
 	}
 
-	m.connectionDuration.WithLabelValues(tunnelID, tenantID).Observe(duration.Seconds())
+	m.connectionDuration.WithLabelValues(tenantID).Observe(duration.Seconds())
 }
 
 // SetBufferPoolSize sets buffer pool size
-func (m *Metrics) SetBufferPoolSize(tunnelID string, size int) {
+func (m *Metrics) SetBufferPoolSize(size int) {
 	if !m.enabled {
 		return
 	}
 
-	m.bufferPoolSize.WithLabelValues(tunnelID).Set(float64(size))
+	m.bufferPoolSize.WithLabelValues().Set(float64(size))
 }
 
 // SetBufferPoolUsage sets buffer pool usage
-func (m *Metrics) SetBufferPoolUsage(tunnelID string, usage int) {
+func (m *Metrics) SetBufferPoolUsage(usage int) {
 	if !m.enabled {
 		return
 	}
 
-	m.bufferPoolUsage.WithLabelValues(tunnelID).Set(float64(usage))
+	m.bufferPoolUsage.WithLabelValues().Set(float64(usage))
 }
 
 // RecordError records an error
-func (m *Metrics) RecordError(errorType, tunnelID, tenantID string) {
+func (m *Metrics) RecordError(errorType, tenantID string) {
 	if !m.enabled {
 		return
 	}
 
-	m.errorsTotal.WithLabelValues(errorType, tunnelID, tenantID).Inc()
+	m.errorsTotal.WithLabelValues(errorType, tenantID).Inc()
 }
 
 // RecordHeartbeatLatency records heartbeat latency
@@ -409,7 +421,7 @@ func (m *Metrics) RecordClientBytesSent(bytes int64) {
 	if !m.enabled {
 		return
 	}
-	m.clientBytesSent.Add(float64(bytes))
+	m.clientBytes.WithLabelValues("sent").Add(float64(bytes))
 }
 
 // RecordClientBytesRecv records bytes received by client
@@ -417,7 +429,7 @@ func (m *Metrics) RecordClientBytesRecv(bytes int64) {
 	if !m.enabled {
 		return
 	}
-	m.clientBytesRecv.Add(float64(bytes))
+	m.clientBytes.WithLabelValues("recv").Add(float64(bytes))
 }
 
 // SetP2PSessions sets the number of active P2P sessions

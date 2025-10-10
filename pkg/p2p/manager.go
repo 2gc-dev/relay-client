@@ -3,6 +3,7 @@ package p2p
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type Manager struct {
 	mesh            *MeshNetwork
 	status          *P2PStatus
 	apiManager      *api.Manager
+	wireguardClient *api.WireGuardClient
 	ctx             context.Context
 	cancel          context.CancelFunc
 	mu              sync.RWMutex
@@ -34,6 +36,15 @@ type Manager struct {
 	relaySessionID  string
 	connections     map[string]*PeerConnection
 	heartbeatTicker *time.Ticker
+	// L3-overlay network fields
+	peerIP          string
+	tenantCIDR      string
+	wireguardConfig string
+	// ICE credentials for signaling
+	localUfrag  string
+	localPwd    string
+	remoteUfrag string
+	remotePwd   string
 }
 
 // Logger interface for P2P manager logging
@@ -56,6 +67,14 @@ type PeerConnection struct {
 // NewManager creates a new P2P manager
 func NewManager(config *P2PConfig, logger Logger) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Нормализуем конфигурацию дефолтами
+	config.FillDefaults()
+
+	// Валидируем конфигурацию
+	if err := config.Validate(); err != nil {
+		logger.Warn("Invalid P2P configuration", "error", err)
+	}
 
 	return &Manager{
 		config:      config,
@@ -93,14 +112,18 @@ func NewManagerWithAPI(config *P2PConfig, apiConfig *api.ManagerConfig,
 
 	apiManager := api.NewManager(apiManagerConfig, authManager, logger)
 
+	// Create WireGuard client
+	wireguardClient := api.NewWireGuardClient(apiManager.GetClient())
+
 	return &Manager{
-		config:      config,
-		apiManager:  apiManager,
-		status:      &P2PStatus{ConnectionType: config.ConnectionType, MeshEnabled: true},
-		ctx:         ctx,
-		cancel:      cancel,
-		logger:      logger,
-		connections: make(map[string]*PeerConnection),
+		config:          config,
+		apiManager:      apiManager,
+		wireguardClient: wireguardClient,
+		status:          &P2PStatus{ConnectionType: config.ConnectionType, MeshEnabled: true},
+		ctx:             ctx,
+		cancel:          cancel,
+		logger:          logger,
+		connections:     make(map[string]*PeerConnection),
 	}
 }
 
@@ -119,9 +142,18 @@ func (m *Manager) Start() error {
 		if err := m.apiManager.Start(); err != nil {
 			return fmt.Errorf("failed to start API manager: %w", err)
 		}
+		// Заполняем обязательные поля после успешного старта API manager
 		m.peerID = m.apiManager.GetPeerID()
-		m.logger.Info("HTTP API manager started", "peer_id", m.peerID)
+		m.tenantID = m.config.TenantID
+		m.token = m.apiManager.GetToken()
+		m.relaySessionID = m.apiManager.GetRelaySessionID()
+		m.logger.Info("HTTP API manager started", "peer_id", m.peerID, "tenant_id", m.tenantID)
 	}
+
+	// Конфигурация уже нормализована в NewManager через FillDefaults()
+	m.logger.Debug("Using normalized heartbeat config",
+		"interval", m.config.HeartbeatInterval,
+		"timeout", m.config.HeartbeatTimeout)
 
 	// Initialize ICE agent
 	if err := m.initializeICE(); err != nil {
@@ -136,6 +168,30 @@ func (m *Manager) Start() error {
 	// Connect to relay server with authentication
 	if err := m.connectToRelayServer(); err != nil {
 		return fmt.Errorf("failed to connect to relay server: %w", err)
+	}
+
+	// Exchange ICE credentials for P2P connectivity
+	if err := m.ExchangeICECredentials(); err != nil {
+		m.logger.Warn("Failed to exchange ICE credentials", "error", err)
+		// Продолжаем работу без ICE - fallback на relay
+	} else {
+		m.logger.Info("ICE credentials exchanged successfully")
+	}
+
+	// Get and apply WireGuard configuration for L3-overlay network
+	if m.wireguardClient != nil {
+		if err := m.ApplyWireGuardConfig(); err != nil {
+			m.logger.Warn("Failed to apply WireGuard config", "error", err)
+		} else {
+			m.logger.Info("L3-overlay network configured and applied",
+				"peer_ip", m.GetPeerIP(),
+				"tenant_cidr", m.GetTenantCIDR())
+
+			// Обновляем mesh сеть с WireGuard информацией
+			if err := m.UpdateMeshWithWireGuard(); err != nil {
+				m.logger.Warn("Failed to update mesh with WireGuard", "error", err)
+			}
+		}
 	}
 
 	// Start peer discovery
@@ -153,6 +209,9 @@ func (m *Manager) Start() error {
 			return fmt.Errorf("failed to start mesh network: %w", err)
 		}
 	}
+
+	// Start L3-overlay health monitoring
+	go m.MonitorL3OverlayHealth()
 
 	m.status.IsConnected = true
 	m.status.MeshEnabled = true
@@ -218,8 +277,8 @@ func (m *Manager) Stop() error {
 func (m *Manager) initializeICE() error {
 	m.logger.Info("Initializing ICE agent")
 
-	// Hardcoded STUN servers for edge.2gc.ru
-	stunServers := []string{"edge.2gc.ru:19302"}
+	// STUN servers with correct format for pion/stun
+	stunServers := []string{"stun:edge.2gc.ru:19302"}
 
 	// Create ICE agent
 	m.iceAgent = ice.NewICEAgent(stunServers, []string{}, m.logger)
@@ -245,8 +304,8 @@ func (m *Manager) initializeQUIC() error {
 	// Create QUIC connection manager
 	m.quicConn = quic.NewQUICConnection(m.logger)
 
-	// Start listening for incoming connections on configured port (5553)
-	listenAddr := ":5553"
+	// Start listening for incoming connections on ephemeral port to avoid conflicts
+	listenAddr := ":0" // ephemeral port to avoid conflicts with relay server
 	if err := m.quicConn.Listen(m.ctx, listenAddr); err != nil {
 		return fmt.Errorf("failed to start QUIC listener: %w", err)
 	}
@@ -267,8 +326,8 @@ func (m *Manager) connectToRelayServer() error {
 		return fmt.Errorf("no token available for authentication")
 	}
 
-	// Connect to relay server QUIC endpoint
-	relayAddr := "10.244.3.33:5553" // Direct pod IP for testing
+	// Connect to relay server QUIC endpoint (derive from config)
+	relayAddr := m.deriveRelayAddrFromConfig()
 	m.logger.Info("Connecting to relay server", "address", relayAddr)
 
 	// Create QUIC connection to relay server
@@ -334,8 +393,12 @@ func (m *Manager) ConnectToPeer(targetPeerID string) error {
 		}
 	}
 
-	// 5. Start connectivity checks
-	if err := m.iceAgent.StartConnectivityChecks(); err != nil {
+	// 5. Start connectivity checks с реальными credentials
+	if m.remoteUfrag == "" || m.remotePwd == "" {
+		return fmt.Errorf("ICE credentials not available - call ExchangeICECredentials() first")
+	}
+
+	if err := m.iceAgent.StartConnectivityChecks(m.remoteUfrag, m.remotePwd); err != nil {
 		return fmt.Errorf("failed to start connectivity checks: %w", err)
 	}
 
@@ -484,6 +547,13 @@ func (m *Manager) GetStatus() *P2PStatus {
 
 	status := *m.status
 	status.ActiveConnections = len(m.connections)
+
+	// Update L3-overlay network status
+	status.L3OverlayReady = m.IsL3OverlayReady()
+	status.PeerIP = m.peerIP
+	status.TenantCIDR = m.tenantCIDR
+	status.WireGuardReady = m.wireguardConfig != ""
+
 	return &status
 }
 
@@ -656,6 +726,24 @@ func (m *Manager) startHeartbeat() {
 
 // sendHeartbeat sends a heartbeat to the relay server
 func (m *Manager) sendHeartbeat() error {
+	if m.apiManager == nil {
+		return fmt.Errorf("API manager not available")
+	}
+
+	// Fail-safe: попытаемся получить недостающие поля
+	if m.tenantID == "" {
+		m.tenantID = m.config.TenantID
+	}
+	if m.peerID == "" {
+		m.peerID = m.apiManager.GetPeerID()
+	}
+	if m.token == "" {
+		m.token = m.apiManager.GetToken()
+	}
+	if m.relaySessionID == "" {
+		m.relaySessionID = m.apiManager.GetRelaySessionID()
+	}
+
 	if m.tenantID == "" || m.peerID == "" || m.token == "" {
 		return fmt.Errorf("missing required fields for heartbeat: tenantID=%s, peerID=%s, token=%s",
 			m.tenantID, m.peerID, m.token)
@@ -680,4 +768,281 @@ func (m *Manager) sendHeartbeat() error {
 
 	m.logger.Debug("Heartbeat sent successfully", "relay_session_id", m.relaySessionID)
 	return nil
+}
+
+// GetWireGuardConfig получает WireGuard конфигурацию для L3-overlay сети
+func (m *Manager) GetWireGuardConfig() (*api.WireGuardConfigResponse, error) {
+	if m.wireguardClient == nil {
+		return nil, fmt.Errorf("WireGuard client not available")
+	}
+
+	// Fail-safe: попытаемся получить недостающие поля
+	if m.tenantID == "" {
+		m.tenantID = m.config.TenantID
+	}
+	if m.peerID == "" {
+		m.peerID = m.apiManager.GetPeerID()
+	}
+	if m.token == "" {
+		m.token = m.apiManager.GetToken()
+	}
+
+	if m.tenantID == "" || m.peerID == "" || m.token == "" {
+		return nil, fmt.Errorf("missing required fields: tenantID=%s, peerID=%s, token=%s",
+			m.tenantID, m.peerID, m.token)
+	}
+
+	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	defer cancel()
+
+	config, err := m.wireguardClient.GetWireGuardConfig(ctx, m.token, m.tenantID, m.peerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get WireGuard config: %w", err)
+	}
+
+	// Store the configuration for later use
+	m.mu.Lock()
+	m.wireguardConfig = config.ClientConfig
+	m.peerIP = config.PeerIP
+	m.tenantCIDR = config.TenantCIDR
+	m.mu.Unlock()
+
+	m.logger.Info("WireGuard config obtained",
+		"peer_ip", config.PeerIP,
+		"tenant_cidr", config.TenantCIDR)
+
+	return config, nil
+}
+
+// GetPeerIP возвращает IP адрес peer'а в L3-overlay сети
+func (m *Manager) GetPeerIP() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.peerIP
+}
+
+// GetTenantCIDR возвращает CIDR подсети тенанта
+func (m *Manager) GetTenantCIDR() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tenantCIDR
+}
+
+// GetWireGuardConfigString возвращает строку конфигурации WireGuard
+func (m *Manager) GetWireGuardConfigString() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.wireguardConfig
+}
+
+// IsL3OverlayReady проверяет готовность L3-overlay сети
+func (m *Manager) IsL3OverlayReady() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.peerIP != "" && m.tenantCIDR != "" && m.wireguardConfig != ""
+}
+
+// ExchangeICECredentials обменивается ICE credentials с сервером
+func (m *Manager) ExchangeICECredentials() error {
+	if m.apiManager == nil {
+		return fmt.Errorf("API manager not available")
+	}
+
+	// Генерируем локальные ICE credentials
+	m.localUfrag = m.generateRandomString(8)
+	m.localPwd = m.generateRandomString(22)
+
+	req := &api.ICECredentialsRequest{
+		Ufrag: m.localUfrag,
+		Pwd:   m.localPwd,
+	}
+
+	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	defer cancel()
+
+	resp, err := m.apiManager.GetClient().ExchangeICECredentials(ctx, m.token, m.tenantID, m.peerID, req)
+	if err != nil {
+		return fmt.Errorf("failed to exchange ICE credentials: %w", err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("ICE credentials exchange failed: %s", resp.Error)
+	}
+
+	// Сохраняем удаленные credentials
+	m.remoteUfrag = resp.Ufrag
+	m.remotePwd = resp.Pwd
+
+	m.logger.Info("ICE credentials exchanged successfully",
+		"local_ufrag", m.localUfrag,
+		"remote_ufrag", m.remoteUfrag)
+
+	return nil
+}
+
+// GetICECredentials получает ICE credentials от другого пира
+func (m *Manager) GetICECredentials(targetPeerID string) error {
+	if m.apiManager == nil {
+		return fmt.Errorf("API manager not available")
+	}
+
+	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	defer cancel()
+
+	resp, err := m.apiManager.GetClient().GetICECredentials(ctx, m.token, m.tenantID, targetPeerID)
+	if err != nil {
+		return fmt.Errorf("failed to get ICE credentials: %w", err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("get ICE credentials failed: %s", resp.Error)
+	}
+
+	// Сохраняем удаленные credentials
+	m.remoteUfrag = resp.Ufrag
+	m.remotePwd = resp.Pwd
+
+	m.logger.Info("ICE credentials received",
+		"target_peer", targetPeerID,
+		"remote_ufrag", m.remoteUfrag)
+
+	return nil
+}
+
+// generateRandomString генерирует случайную строку заданной длины
+func (m *Manager) generateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
+}
+
+// ApplyWireGuardConfig применяет WireGuard конфигурацию
+func (m *Manager) ApplyWireGuardConfig() error {
+	if m.wireguardClient == nil {
+		return fmt.Errorf("WireGuard client not available")
+	}
+
+	// Получаем конфигурацию
+	config, err := m.GetWireGuardConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get WireGuard config: %w", err)
+	}
+
+	// Сохраняем конфигурацию в файл
+	configPath := "/tmp/wg-client.conf"
+	if err := m.wireguardClient.SaveWireGuardConfig(config.ClientConfig, configPath); err != nil {
+		return fmt.Errorf("failed to save WireGuard config: %w", err)
+	}
+
+	// Применяем конфигурацию
+	appliedPath, err := m.wireguardClient.ApplyWireGuardConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to apply WireGuard config: %w", err)
+	}
+
+	m.logger.Info("WireGuard configuration applied successfully",
+		"config_path", appliedPath,
+		"peer_ip", config.PeerIP,
+		"tenant_cidr", config.TenantCIDR)
+
+	return nil
+}
+
+// UpdateMeshWithWireGuard обновляет mesh сеть с информацией о WireGuard
+func (m *Manager) UpdateMeshWithWireGuard() error {
+	if m.mesh == nil {
+		return fmt.Errorf("mesh network not available")
+	}
+
+	// Создаем пира для mesh сети с WireGuard информацией
+	peer := &Peer{
+		ID:          m.peerID,
+		Endpoint:    m.GetPeerIP(),
+		PublicKey:   "", // TODO: получить из WireGuard конфига
+		AllowedIPs:  []string{m.GetTenantCIDR()},
+		IsConnected: true,
+		Latency:     0,
+		LastSeen:    time.Now().Unix(),
+	}
+
+	// Добавляем/обновляем пира в mesh
+	m.mesh.UpsertPeer(peer)
+
+	m.logger.Info("Mesh network updated with WireGuard information",
+		"peer_id", peer.ID,
+		"endpoint", peer.Endpoint,
+		"allowed_ips", peer.AllowedIPs)
+
+	return nil
+}
+
+// GetL3OverlayStatus возвращает статус L3-overlay сети
+func (m *Manager) GetL3OverlayStatus() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	status := map[string]interface{}{
+		"ready":       m.IsL3OverlayReady(),
+		"peer_ip":     m.peerIP,
+		"tenant_cidr": m.tenantCIDR,
+		"has_config":  m.wireguardConfig != "",
+		"ice_credentials": map[string]interface{}{
+			"local_ufrag":  m.localUfrag,
+			"local_pwd":    m.localPwd != "",
+			"remote_ufrag": m.remoteUfrag,
+			"remote_pwd":   m.remotePwd != "",
+		},
+	}
+
+	// Добавляем информацию о mesh сети
+	if m.mesh != nil {
+		meshStats := m.mesh.GetMeshStats()
+		status["mesh"] = meshStats
+	}
+
+	return status
+}
+
+// MonitorL3OverlayHealth мониторит здоровье L3-overlay сети
+func (m *Manager) MonitorL3OverlayHealth() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			status := m.GetL3OverlayStatus()
+
+			// Проверяем готовность L3-overlay
+			if !status["ready"].(bool) {
+				m.logger.Warn("L3-overlay network not ready", "status", status)
+			}
+
+			// Проверяем ICE credentials
+			iceCreds := status["ice_credentials"].(map[string]interface{})
+			if iceCreds["remote_ufrag"].(string) == "" {
+				m.logger.Debug("ICE credentials not available - using relay fallback")
+			}
+
+			// Логируем статистику mesh сети
+			if mesh, ok := status["mesh"].(map[string]interface{}); ok {
+				m.logger.Debug("L3-overlay health check",
+					"active_peers", mesh["active_peers"],
+					"total_peers", mesh["total_peers"],
+					"routing_routes", mesh["routing_routes"])
+			}
+		}
+	}
+}
+
+// deriveRelayAddrFromConfig извлекает адрес релэя из конфигурации
+func (m *Manager) deriveRelayAddrFromConfig() string {
+	// TODO: Реализовать извлечение адреса из BaseURL конфигурации
+	// Пока используем дефолтный адрес для тестирования
+	return "edge.2gc.ru:5553"
 }

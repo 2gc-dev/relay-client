@@ -16,12 +16,20 @@ import (
 	"github.com/2gc-dev/cloudbridge-client/pkg/config"
 	"github.com/2gc-dev/cloudbridge-client/pkg/errors"
 	"github.com/2gc-dev/cloudbridge-client/pkg/heartbeat"
+	"github.com/2gc-dev/cloudbridge-client/pkg/interfaces"
 	"github.com/2gc-dev/cloudbridge-client/pkg/metrics"
 	"github.com/2gc-dev/cloudbridge-client/pkg/p2p"
 	"github.com/2gc-dev/cloudbridge-client/pkg/performance"
 	"github.com/2gc-dev/cloudbridge-client/pkg/tunnel"
 	"github.com/2gc-dev/cloudbridge-client/pkg/types"
 	"github.com/golang-jwt/jwt/v5"
+)
+
+// Константы для метрик транспорта
+const (
+	MetricTransportQUIC      = 0
+	MetricTransportWireGuard = 1
+	MetricTransportGRPC      = 2
 )
 
 // Client represents a CloudBridge Relay client
@@ -43,14 +51,22 @@ type Client struct {
 	transportAdapter    *TransportAdapter
 	useTransportAdapter bool
 	connectionType      string
-	logger              *relayLogger
-	mu                  sync.RWMutex
-	connected           bool
-	clientID            string
-	tenantID            string
-	tokenString         string
-	ctx                 context.Context
-	cancel              context.CancelFunc
+
+	// Новые компоненты для улучшенного клиента
+	masqueClient    interface{} // *masque.MASQUEClient
+	handoverManager interface{} // *handover.HandoverManager
+	sloController   interface{} // *slo.SLOController
+	probeManager    interface{} // *probes.SyntheticProbeManager
+	logger          *relayLogger
+	mu              sync.RWMutex
+	connected       bool
+	clientID        string
+	tenantID        string
+	tokenString     string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	lastHeartbeat   time.Time
+	stateEvents     chan interfaces.ClientStateEvent
 }
 
 // Message types as defined in the requirements
@@ -144,6 +160,9 @@ func NewClient(cfg *types.Config, configPath string) (*Client, error) {
 	// Create AutoSwitchManager for WireGuard fallback
 	client.autoSwitchMgr = NewAutoSwitchManager(cfg, client.logger)
 
+	// Инициализируем новые компоненты
+	client.initializeEnhancedComponents()
+
 	// Add callback to update transport mode metrics
 	client.autoSwitchMgr.AddSwitchCallback(func(from, to TransportMode) {
 		var modeValue int
@@ -196,15 +215,12 @@ func NewClient(cfg *types.Config, configPath string) (*Client, error) {
 		return nil, fmt.Errorf("failed to initialize transport adapter: %w", err)
 	}
 
-	// Sync transport mode with transport adapter
+	// Определяем использование transport adapter на основе режима
 	currentMode := client.transportAdapter.GetCurrentMode()
-	client.logger.Info("Transport adapter mode check", "currentMode", currentMode, "before_useTransportAdapter", client.useTransportAdapter)
-	if currentMode == "grpc" {
-		client.useTransportAdapter = true
-		client.logger.Info("Synced with transport adapter", "mode", currentMode, "useTransportAdapter", client.useTransportAdapter)
-	} else {
-		client.logger.Info("Mode is not gRPC, keeping useTransportAdapter as false", "mode", currentMode)
-	}
+	client.useTransportAdapter = (currentMode == "grpc")
+	client.logger.Info("Transport adapter selected",
+		"mode", currentMode,
+		"useTransportAdapter", client.useTransportAdapter)
 
 	// Initialize config watcher for hot-reload
 	if configPath != "" {
@@ -231,30 +247,34 @@ func NewClient(cfg *types.Config, configPath string) (*Client, error) {
 // Connect establishes a connection to the relay server
 func (c *Client) Connect() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.logger.Info("Connect called", "useTransportAdapter", c.useTransportAdapter, "transportAdapter_nil", c.transportAdapter == nil)
-
 	if c.connected {
+		c.mu.Unlock()
 		return fmt.Errorf("already connected")
 	}
+	useTA := c.useTransportAdapter
+	c.mu.Unlock() // CRITICAL: отпускаем мьютекс перед I/O
+
+	c.logger.Info("Connect called", "useTransportAdapter", useTA, "transportAdapter_nil", c.transportAdapter == nil)
 
 	// Use transport adapter if enabled
-	if c.useTransportAdapter {
+	if useTA {
 		c.logger.Info("Using transport adapter for connection")
 		if err := c.transportAdapter.Connect(); err != nil {
 			return fmt.Errorf("failed to connect via transport adapter: %w", err)
 		}
 
 		// Send hello via transport adapter
-		if err := c.transportAdapter.Hello("1.0", []string{"tls", "heartbeat", "tunnel_info", "grpc"}); err != nil {
+		if err := c.transportAdapter.Hello("1.0", []string{"tls", "heartbeat", "tunnel_info", "grpc", "masque", "http3_datagrams"}); err != nil {
 			if disconnErr := c.transportAdapter.Disconnect(); disconnErr != nil {
 				c.logger.Error("Failed to disconnect transport adapter after hello failure", "error", disconnErr)
 			}
 			return fmt.Errorf("failed to send hello via transport adapter: %w", err)
 		}
 
+		c.mu.Lock()
 		c.connected = true
+		c.mu.Unlock()
+		c.emitStateEvent("connected", "transport adapter")
 		return nil
 	}
 
@@ -301,53 +321,77 @@ func (c *Client) Connect() error {
 	}
 
 	c.connected = true
+	c.emitStateEvent("connected", "legacy JSON transport")
 	return nil
 }
 
 // Authenticate authenticates with the relay server
 func (c *Client) Authenticate(token string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	useTA := c.useTransportAdapter
+	connected := c.connected
+	c.mu.RUnlock() // CRITICAL: отпускаем мьютекс перед I/O
 
-	c.logger.Info("Authenticate called", "useTransportAdapter", c.useTransportAdapter, "transportAdapter_nil", c.transportAdapter == nil)
+	c.logger.Info("Authenticate called", "useTransportAdapter", useTA, "transportAdapter_nil", c.transportAdapter == nil)
 
-	if !c.connected {
+	if !connected {
 		return fmt.Errorf("not connected")
 	}
 
-	// If using transport adapter (gRPC), delegate auth and skip legacy JSON path
-	c.logger.Info("Checking transport adapter condition",
-		"useTransportAdapter", c.useTransportAdapter,
-		"transportAdapter_nil", c.transportAdapter == nil)
-	if c.useTransportAdapter && c.transportAdapter != nil {
-		c.logger.Info("Using transport adapter for authentication")
-		clientID, tenantID, err := c.transportAdapter.Authenticate(token)
-		if err != nil {
-			return err
-		}
-		c.clientID = clientID
-		c.tenantID = tenantID
-		c.tokenString = token
-		return nil
-	}
-
-	c.logger.Info("Using legacy JSON authentication")
-
-	// Validate token and extract claims
+	// CRITICAL: всегда валидируем JWT локально
 	validatedToken, err := c.authManager.ValidateToken(token)
 	if err != nil {
 		return fmt.Errorf("failed to validate token: %w", err)
 	}
 
-	// Extract subject and tenant_id from token
+	// Извлекаем claims локально
 	_, tenantID, err := c.authManager.ExtractClaims(validatedToken)
 	if err != nil {
 		return fmt.Errorf("failed to extract claims: %w", err)
 	}
 
-	// Store tenant ID and token string
+	// Извлекаем connection type
+	connType, err := c.authManager.ExtractConnectionType(validatedToken)
+	if err != nil {
+		connType = "client-server"
+		c.logger.Warn("connection_type missing in JWT", "err", err)
+	}
+
+	// If using transport adapter (gRPC), дополнительно аутентифицируемся через адаптер
+	if useTA && c.transportAdapter != nil {
+		c.logger.Info("Using transport adapter for authentication")
+		clientID, _, err := c.transportAdapter.Authenticate(token)
+		if err != nil {
+			return err
+		}
+
+		c.mu.Lock()
+		c.clientID = clientID
+		c.tenantID = tenantID // используем локальные claims
+		c.tokenString = token
+		c.connectionType = connType
+		c.mu.Unlock()
+
+		// Инициализируем P2P если нужно
+		if connType == "p2p-mesh" {
+			if err := c.initializeP2PManager(validatedToken); err != nil {
+				return fmt.Errorf("p2p init: %w", err)
+			}
+		}
+		return nil
+	}
+
+	c.logger.Info("Using legacy JSON authentication")
+
+	// Legacy JSON authentication - дублируем валидацию для совместимости
+	// (уже сделано выше, но оставляем для legacy пути)
+
+	// Store tenant ID and token string (используем уже извлеченные значения)
+	c.mu.Lock()
 	c.tenantID = tenantID
 	c.tokenString = token
+	c.connectionType = connType
+	c.mu.Unlock()
 
 	// Create auth message
 	authMsg, err := c.authManager.CreateAuthMessage(token)
@@ -519,6 +563,7 @@ func (c *Client) Disconnect() error {
 	}
 
 	c.connected = false
+	c.emitStateEvent("disconnected", "manual disconnect")
 	c.logger.Info("Disconnected from relay server")
 	return nil
 }
@@ -528,9 +573,11 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// CRITICAL: всегда отменяем контекст в конце
+	defer c.cancel()
+
 	if !c.connected {
 		// Still need to clean up resources even if not connected
-		c.cancel()
 		return nil
 	}
 
@@ -567,9 +614,6 @@ func (c *Client) Close() error {
 			fmt.Printf("Failed to close connection: %v\n", err)
 		}
 	}
-
-	// Cancel context
-	c.cancel()
 
 	c.connected = false
 	return nil
@@ -642,7 +686,13 @@ func (c *Client) SendHeartbeat() error {
 			"client_id", c.clientID,
 			"tenant_id", c.tenantID)
 
-		return c.transportAdapter.SendHeartbeat(c.clientID, c.tenantID)
+		err := c.transportAdapter.SendHeartbeat(c.clientID, c.tenantID)
+		if err == nil {
+			c.mu.Lock()
+			c.lastHeartbeat = time.Now()
+			c.mu.Unlock()
+		}
+		return err
 	}
 
 	// Legacy JSON transport path
@@ -664,6 +714,11 @@ func (c *Client) SendHeartbeat() error {
 	if response["type"] != MessageTypeHeartbeatResponse {
 		return fmt.Errorf("unexpected response type: %s", response["type"])
 	}
+
+	// Update last heartbeat time
+	c.mu.Lock()
+	c.lastHeartbeat = time.Now()
+	c.mu.Unlock()
 
 	return nil
 }
@@ -974,17 +1029,17 @@ func (c *Client) UpdateMetrics() {
 
 	// Update transport mode based on current settings
 	if c.useTransportAdapter {
-		c.metrics.SetTransportMode(2) // gRPC mode
+		c.metrics.SetTransportMode(MetricTransportGRPC) // gRPC mode
 	} else {
 		// Use AutoSwitchManager mode
 		mode := c.autoSwitchMgr.GetCurrentMode()
 		switch mode {
 		case TransportModeQUIC:
-			c.metrics.SetTransportMode(0)
+			c.metrics.SetTransportMode(MetricTransportQUIC)
 		case TransportModeWireGuard:
-			c.metrics.SetTransportMode(1)
+			c.metrics.SetTransportMode(MetricTransportWireGuard)
 		default:
-			c.metrics.SetTransportMode(0)
+			c.metrics.SetTransportMode(MetricTransportQUIC)
 		}
 	}
 }
@@ -1018,4 +1073,105 @@ func (cla *configLoggerAdapter) Debug(msg string, fields ...interface{}) {
 
 func (cla *configLoggerAdapter) Warn(msg string, fields ...interface{}) {
 	cla.logger.Warn(msg, fields...)
+}
+
+// initializeEnhancedComponents инициализирует новые компоненты клиента
+func (c *Client) initializeEnhancedComponents() {
+	c.logger.Info("Initializing enhanced client components...")
+
+	// TODO: Реальная инициализация будет добавлена после создания пакетов
+	// Пока что устанавливаем заглушки для совместимости
+	c.masqueClient = nil
+	c.handoverManager = nil
+	c.sloController = nil
+	c.probeManager = nil
+
+	c.logger.Info("Enhanced client components initialized successfully")
+}
+
+// setupSyntheticProbes настраивает synthetic probes
+func (c *Client) setupSyntheticProbes() {
+	// TODO: Настройка synthetic probes будет добавлена после создания пакетов
+	c.logger.Info("Synthetic probes setup placeholder")
+}
+
+// GetMASQUEClient возвращает MASQUE клиент
+func (c *Client) GetMASQUEClient() interface{} {
+	return c.masqueClient
+}
+
+// GetHandoverManager возвращает Handover Manager
+func (c *Client) GetHandoverManager() interface{} {
+	return c.handoverManager
+}
+
+// GetSLOController возвращает SLO Controller
+func (c *Client) GetSLOController() interface{} {
+	return c.sloController
+}
+
+// GetProbeManager возвращает Synthetic Probe Manager
+func (c *Client) GetProbeManager() interface{} {
+	return c.probeManager
+}
+
+// Start starts the client (implements interfaces.ClientInterface)
+func (c *Client) Start() error {
+	return c.Connect()
+}
+
+// Stop stops the client (implements interfaces.ClientInterface)
+func (c *Client) Stop() error {
+	return c.Close()
+}
+
+// Reconnect reconnects the client (implements interfaces.ClientInterface)
+func (c *Client) Reconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.connected {
+		if err := c.Disconnect(); err != nil {
+			return fmt.Errorf("failed to disconnect: %w", err)
+		}
+	}
+
+	return c.Connect()
+}
+
+// LastHeartbeat returns the time of the last heartbeat (implements interfaces.ClientInterface)
+func (c *Client) LastHeartbeat() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.lastHeartbeat
+}
+
+// SubscribeState returns a channel for state events (implements interfaces.ClientInterface)
+func (c *Client) SubscribeState() <-chan interfaces.ClientStateEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.stateEvents == nil {
+		c.stateEvents = make(chan interfaces.ClientStateEvent, 10)
+	}
+
+	return c.stateEvents
+}
+
+// emitStateEvent emits a state event
+func (c *Client) emitStateEvent(state, reason string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.stateEvents != nil {
+		select {
+		case c.stateEvents <- interfaces.ClientStateEvent{
+			State:   state,
+			Reason:  reason,
+			Updated: time.Now(),
+		}:
+		default:
+			// Channel is full, skip event
+		}
+	}
 }

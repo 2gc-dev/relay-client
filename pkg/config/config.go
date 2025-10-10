@@ -59,10 +59,10 @@ func LoadConfig(configPath string) (*types.Config, error) {
 func setDefaults() {
 	// Relay configuration - синхронизировано с реальными портами edge.2gc.ru
 	viper.SetDefault("relay.host", "edge.2gc.ru")       // Реальный домен
-	viper.SetDefault("relay.port", 8082)                // Реально открытый P2P API порт
-	viper.SetDefault("relay.ports.http_api", 8082)      // P2P API через nginx
-	viper.SetDefault("relay.ports.p2p_api", 8082)       // P2P API прямой доступ
-	viper.SetDefault("relay.ports.quic", 9090)          // QUIC Transport
+	viper.SetDefault("relay.port", 5553)                // P2P QUIC порт
+	viper.SetDefault("relay.ports.http_api", 5553)      // P2P API через QUIC
+	viper.SetDefault("relay.ports.p2p_api", 5553)       // P2P API прямой доступ
+	viper.SetDefault("relay.ports.quic", 5553)          // QUIC Transport
 	viper.SetDefault("relay.ports.stun", 19302)         // STUN Server (реально открыт)
 	viper.SetDefault("relay.ports.masque", 8443)        // MASQUE Proxy через nginx
 	viper.SetDefault("relay.ports.enhanced_quic", 9092) // Enhanced QUIC (реально открыт)
@@ -74,13 +74,14 @@ func setDefaults() {
 	viper.SetDefault("relay.tls.min_version", "1.3")
 	// Verify relay server certificate by default
 	viper.SetDefault("relay.tls.verify_cert", true)
-	viper.SetDefault("relay.tls.server_name", "localhost") // Minikube localhost
+	viper.SetDefault("relay.tls.server_name", "b1.2gc.space") // Используем имя из серверного сертификата
 
 	// Authentication
 	viper.SetDefault("auth.type", "jwt")
 	viper.SetDefault("auth.fallback_secret", "")
 	viper.SetDefault("auth.skip_validation", false)
 	viper.SetDefault("auth.keycloak.enabled", false)
+	viper.SetDefault("auth.keycloak.server_url", "https://edge.2gc.ru") // Обновленный адрес Zitadel
 
 	// Rate limiting
 	viper.SetDefault("rate_limiting.enabled", true)
@@ -103,10 +104,10 @@ func setDefaults() {
 	viper.SetDefault("metrics.pushgateway.push_interval", "30s")
 
 	// API configuration - синхронизировано с edge.2gc.ru
-	viper.SetDefault("api.base_url", "https://edge.2gc.ru")      // HTTPS основной домен
-	viper.SetDefault("api.p2p_api_url", "https://edge.2gc.ru")   // P2P API через основной домен
-	viper.SetDefault("api.heartbeat_url", "https://edge.2gc.ru") // Heartbeat через основной домен
-	viper.SetDefault("api.insecure_skip_verify", false)          // Проверять SSL сертификаты
+	viper.SetDefault("api.base_url", "https://edge.2gc.ru:5553")      // HTTPS основной домен через QUIC порт
+	viper.SetDefault("api.p2p_api_url", "https://edge.2gc.ru:5553")   // P2P API через QUIC порт
+	viper.SetDefault("api.heartbeat_url", "https://edge.2gc.ru:5553") // Heartbeat через QUIC порт
+	viper.SetDefault("api.insecure_skip_verify", false)               // Проверять SSL сертификаты
 	viper.SetDefault("api.timeout", "30s")
 	viper.SetDefault("api.max_retries", 3)
 	viper.SetDefault("api.backoff_multiplier", 2.0)
@@ -161,7 +162,7 @@ func setDefaults() {
 
 	// WebSocket configuration
 	viper.SetDefault("websocket.enabled", true)
-	viper.SetDefault("websocket.endpoint", "ws://localhost:8080/ws")
+	viper.SetDefault("websocket.endpoint", "wss://edge.2gc.ru:5553/ws") // Правильный WebSocket endpoint
 	viper.SetDefault("websocket.timeout", "30s")
 	viper.SetDefault("websocket.ping_interval", "15s")
 	viper.SetDefault("websocket.max_reconnect_attempts", 5)

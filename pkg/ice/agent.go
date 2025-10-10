@@ -3,6 +3,7 @@ package ice
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,19 +45,23 @@ func (a *ICEAgent) Start() error {
 
 	a.logger.Info("Starting ICE agent", "stun_servers", a.stunServers, "turn_servers", a.turnServers)
 
-	// Configure ICE agent
 	urls := make([]*stun.URI, len(a.stunServers))
-	for i, server := range a.stunServers {
-		uri, err := stun.ParseURI(server)
-		if err != nil {
-			return fmt.Errorf("failed to parse STUN server URI %s: %w", server, err)
+	for i, s := range a.stunServers {
+		// дополняем префикс если его нет
+		if !strings.HasPrefix(s, "stun:") && !strings.HasPrefix(s, "stuns:") {
+			s = "stun:" + s
 		}
-		urls[i] = uri
+		u, err := stun.ParseURI(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse STUN URI %q: %w", s, err)
+		}
+		urls[i] = u
 	}
 
 	a.config = &ice.AgentConfig{
 		NetworkTypes: []ice.NetworkType{ice.NetworkTypeUDP4, ice.NetworkTypeUDP6},
 		Urls:         urls,
+		// Либо тут, либо позже через `agent.Set*`
 	}
 
 	// Create ICE agent
@@ -98,62 +103,99 @@ func (a *ICEAgent) Stop() error {
 // GatherCandidates starts candidate gathering
 func (a *ICEAgent) GatherCandidates() ([]ice.Candidate, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.agent == nil {
+	ag := a.agent
+	a.mu.RUnlock()
+	if ag == nil {
 		return nil, fmt.Errorf("ICE agent not started")
 	}
 
-	a.logger.Info("Starting candidate gathering")
+	done := make(chan struct{})
+	// ловим завершение сбора через OnCandidate с nil
+	if err := ag.OnCandidate(func(c ice.Candidate) {
+		if c == nil {
+			// nil candidate означает завершение сбора
+			close(done)
+		}
+	}); err != nil {
+		return nil, fmt.Errorf("failed to set candidate handler: %w", err)
+	}
 
-	// Start gathering candidates
-	if err := a.agent.GatherCandidates(); err != nil {
+	if err := ag.GatherCandidates(); err != nil {
 		return nil, fmt.Errorf("failed to gather candidates: %w", err)
 	}
 
-	// Wait for gathering to complete
-	timeout := time.After(10 * time.Second)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			return nil, fmt.Errorf("candidate gathering timeout")
-		case <-ticker.C:
-			candidates, err := a.agent.GetLocalCandidates()
-			if err == nil && len(candidates) > 0 {
-				a.logger.Info("Candidate gathering completed", "count", len(candidates))
-				return candidates, nil
-			}
-		}
+	select {
+	case <-done:
+		// ok
+	case <-time.After(15 * time.Second):
+		return nil, fmt.Errorf("candidate gathering timeout")
 	}
+
+	// теперь можно безопасно получить локальные кандидаты
+	cands, err := ag.GetLocalCandidates()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local candidates: %w", err)
+	}
+	a.logger.Info("Candidate gathering completed", "count", len(cands))
+	return cands, nil
 }
 
-// AddRemoteCandidate adds a remote candidate
+// AddRemoteCandidateFromSDP adds a remote candidate from SDP string
+func (a *ICEAgent) AddRemoteCandidateFromSDP(sdpCand string) error {
+	a.mu.RLock()
+	ag := a.agent
+	a.mu.RUnlock()
+	if ag == nil {
+		return fmt.Errorf("ICE agent not started")
+	}
+	c, err := ice.UnmarshalCandidate(sdpCand)
+	if err != nil {
+		return fmt.Errorf("failed to parse remote candidate: %w", err)
+	}
+	a.logger.Debug("Adding remote candidate", "candidate", c.String())
+	return ag.AddRemoteCandidate(c)
+}
+
+// AddRemoteCandidate adds a remote candidate (thin wrapper for existing Candidate objects)
 func (a *ICEAgent) AddRemoteCandidate(candidate ice.Candidate) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.agent == nil {
+	ag := a.agent
+	a.mu.RUnlock()
+	if ag == nil {
 		return fmt.Errorf("ICE agent not started")
 	}
-
 	a.logger.Debug("Adding remote candidate", "candidate", candidate.String())
-	return a.agent.AddRemoteCandidate(candidate)
+	return ag.AddRemoteCandidate(candidate)
 }
 
-// StartConnectivityChecks starts ICE connectivity checks
-func (a *ICEAgent) StartConnectivityChecks() error {
+// StartConnectivityChecks starts ICE connectivity checks (skeleton through remote creds)
+func (a *ICEAgent) StartConnectivityChecks(remoteUfrag, remotePwd string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.agent == nil {
+	ag := a.agent
+	a.mu.RUnlock()
+	if ag == nil {
 		return fmt.Errorf("ICE agent not started")
 	}
 
-	a.logger.Info("Starting ICE connectivity checks")
-	// Note: StartConnectivityChecks is not available in v2, using alternative approach
+	// В v2 это три шага: задать свои/их креды + обмен кандидатами + Dial/Accept
+	// 1) свои креды (обычно их генерят):
+	localUfrag, _, err := ag.GetLocalUserCredentials()
+	if err != nil {
+		return fmt.Errorf("failed to get local ICE creds: %w", err)
+	}
+	a.logger.Debug("Local ICE creds", "ufrag", localUfrag, "pwd", "***")
+
+	// 2) установить удалённые креды
+	if err := ag.SetRemoteCredentials(remoteUfrag, remotePwd); err != nil {
+		return fmt.Errorf("failed to set remote ICE creds: %w", err)
+	}
+
+	// 3) Транспорт поднимется, когда вы вызовете Dial/Accept (в разных ролях)
+	// Здесь оставляем как хук — реализация зависит от роли и архитектуры:
+	//   conn, err := ag.Dial(context, remoteAddrs...)   // для controlling
+	//   conn, err := ag.Accept(context, ...)            // для controlled
+	// Управляйте role через AgentConfig.Role в NewAgent или SetControlling().
+	a.logger.Info("ICE credentials set; start Dial/Accept in your session flow")
 	return nil
 }
 
@@ -173,77 +215,86 @@ func (a *ICEAgent) GetSelectedCandidatePair() (*ice.CandidatePair, error) {
 func (a *ICEAgent) GetConnectionState() ice.ConnectionState {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-
 	if a.agent == nil {
 		return ice.ConnectionStateClosed
 	}
-
-	// Note: ConnectionState is not directly accessible in v2
-	return ice.ConnectionStateNew
+	// В v2 GetConnectionState может отсутствовать, используем альтернативный подход
+	// Можно отслеживать состояние через OnConnectionStateChange callback
+	return ice.ConnectionStateNew // fallback
 }
 
 // setupEventHandlers sets up ICE agent event handlers
 func (a *ICEAgent) setupEventHandlers() {
-	// On candidate gathering state change
-	if err := a.agent.OnCandidate(func(candidate ice.Candidate) {
-		a.logger.Debug("New candidate gathered", "candidate", candidate.String())
+	if err := a.agent.OnCandidate(func(c ice.Candidate) {
+		if c != nil {
+			a.logger.Debug("New candidate gathered", "candidate", c.String())
+		}
 	}); err != nil {
 		a.logger.Error("Failed to set candidate handler", "error", err)
 	}
 
-	// On connection state change
-	if err := a.agent.OnConnectionStateChange(func(state ice.ConnectionState) {
-		a.logger.Info("ICE connection state changed", "state", state.String())
-	}); err != nil {
-		a.logger.Error("Failed to set connection state handler", "error", err)
-	}
-
-	// On selected candidate pair change
 	if err := a.agent.OnSelectedCandidatePairChange(func(local, remote ice.Candidate) {
 		a.logger.Info("Selected candidate pair changed",
-			"local", local.String(),
-			"remote", remote.String())
+			"local", func() string {
+				if local != nil {
+					return local.String()
+				}
+				return ""
+			}(),
+			"remote", func() string {
+				if remote != nil {
+					return remote.String()
+				}
+				return ""
+			}(),
+		)
 	}); err != nil {
 		a.logger.Error("Failed to set candidate pair handler", "error", err)
+	}
+
+	if err := a.agent.OnConnectionStateChange(func(s ice.ConnectionState) {
+		a.logger.Info("ICE connection state changed", "state", s.String())
+	}); err != nil {
+		a.logger.Error("Failed to set connection state handler", "error", err)
 	}
 }
 
 // ValidateSTUNServer validates a STUN server
 func ValidateSTUNServer(server string) error {
-	conn, err := net.DialTimeout("udp", server, 5*time.Second)
+	// допускаем «короткий» формат host:port
+	addr := server
+	if strings.HasPrefix(addr, "stun:") || strings.HasPrefix(addr, "stuns:") {
+		// stun.ParseURL может пригодиться для извлечения host:port, но для простоты:
+		addr = strings.TrimPrefix(strings.TrimPrefix(addr, "stun:"), "stuns:")
+	}
+
+	conn, err := net.DialTimeout("udp", addr, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to connect to STUN server %s: %w", server, err)
 	}
 	defer conn.Close()
 
-	// Send STUN binding request
-	request := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
-
-	_, err = conn.Write(request.Raw)
-	if err != nil {
+	req := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+	if _, err := conn.Write(req.Raw); err != nil {
 		return fmt.Errorf("failed to send STUN request: %w", err)
 	}
-
-	// Read response
-	response := make([]byte, 1024)
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return fmt.Errorf("failed to set read deadline: %w", err)
 	}
-	n, err := conn.Read(response)
+
+	buf := make([]byte, 1500)
+	n, err := conn.Read(buf)
 	if err != nil {
 		return fmt.Errorf("failed to read STUN response: %w", err)
 	}
 
-	// Parse response
 	var msg stun.Message
-	if err := msg.UnmarshalBinary(response[:n]); err != nil {
+	if err := msg.UnmarshalBinary(buf[:n]); err != nil {
 		return fmt.Errorf("failed to parse STUN response: %w", err)
 	}
-
 	if msg.Type != stun.BindingSuccess {
 		return fmt.Errorf("unexpected STUN response type: %v", msg.Type)
 	}
-
 	return nil
 }
 

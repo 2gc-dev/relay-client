@@ -22,11 +22,15 @@ Cross-platform client for CloudBridge Relay P2P mesh networking.
 
 3. **Run**:
    ```bash
-   # P2P mesh mode
+   # P2P mesh mode with L3-overlay network
    ./cloudbridge-client p2p --config config.yaml --server-id my-server-001
    
    # Tunnel mode
    ./cloudbridge-client tunnel --config config.yaml --local-port 3389 --remote-host target.com --remote-port 3389
+   
+   # WireGuard L3-overlay network management
+   ./cloudbridge-client wireguard config --config config.yaml --token YOUR_JWT_TOKEN
+   ./cloudbridge-client wireguard status --config config.yaml --token YOUR_JWT_TOKEN
    ```
 
 ## Configuration Files
@@ -40,7 +44,15 @@ Cross-platform client for CloudBridge Relay P2P mesh networking.
 - **QUIC** - Primary high-performance transport
 - **WebSocket** - Fallback for restricted networks
 - **gRPC** - API communication
-- **WireGuard** - Legacy VPN support
+- **WireGuard** - L3-overlay network support
+
+## L3-overlay Network Features
+
+- **Per-peer IPAM** - Automatic IP address allocation for each peer
+- **WireGuard Integration** - Ready-to-use WireGuard configurations
+- **Tenant Isolation** - Complete network isolation between tenants
+- **Hybrid Architecture** - SCORE for tenant subnets, local DB for per-peer IPs
+- **Event-driven Sync** - Real-time configuration updates
 
 ## Build
 
