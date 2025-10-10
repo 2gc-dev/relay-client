@@ -1,0 +1,236 @@
+version: 2
+project_name: relay-client
+release:
+  github:
+    owner: 2gc-dev
+    name: relay-client
+  name_template: CloudBridge Client {{ .Version }}
+  header: |
+    ## CloudBridge Client {{ .Version }}
+
+    This release ships Linux packages (DEB/RPM), macOS PKG, and cross-platform archives (tar.gz/zip).
+
+    ### Packages Included:
+    - **DEB**: Ubuntu/Debian (systemd unit installed)
+    - **RPM**: RHEL/CentOS/Fedora (systemd unit installed)
+    - **Archives**: Linux/macOS/Windows binaries (.tar.gz/.zip)
+
+    ### Supported Platforms:
+    - **Linux**: amd64, arm64, 386 (DEB/RPM packages + archives)
+    - **Windows**: amd64, arm64, 386 (archives only)
+    - **macOS**: amd64, arm64 (archives only)
+
+    ### Quick Install (Linux):
+    ```bash
+    # DEB
+    sudo dpkg -i cloudbridge-client_{{ .Version }}_amd64.deb
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now cloudbridge-client
+
+    # RPM
+    sudo rpm -i cloudbridge-client-{{ .Version }}-1.x86_64.rpm
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now cloudbridge-client
+    ```
+  footer: |-
+    ## Paths & Config
+    - **Binary (Linux)**: /usr/bin/cloudbridge-client
+    - **Service (Linux)**: /lib/systemd/system/cloudbridge-client.service
+    - **Config (Linux)**: /etc/cloudbridge-client/config.yaml
+    - **Logs (Linux)**: /var/log/cloudbridge-client/
+
+    - **Binary (macOS)**: /usr/local/bin/cloudbridge-client
+    - **Config (macOS)**: /usr/local/etc/cloudbridge-client/config.yaml
+    - **Docs (macOS)**: /usr/local/share/doc/cloudbridge-client/
+
+    ### Restart service (Linux)
+    sudo systemctl restart cloudbridge-client
+builds:
+  - id: cloudbridge-client
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+    goamd64:
+      - v1
+    go386:
+      - sse2
+    goarm:
+      - "6"
+    goarm64:
+      - v8.0
+    gomips:
+      - hardfloat
+    goppc64:
+      - power8
+    goriscv64:
+      - rva20u64
+    targets:
+      - linux_amd64_v1
+      - linux_arm64_v8.0
+      - linux_386_sse2
+      - windows_amd64_v1
+      - windows_arm64_v8.0
+      - windows_386_sse2
+      - darwin_amd64_v1
+      - darwin_arm64_v8.0
+    ignore:
+      - goos: darwin
+        goarch: "386"
+    dir: .
+    main: ./cmd/cloudbridge-client
+    binary: cloudbridge-client
+    builder: go
+    tool: go
+    command: build
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.buildTime={{.Date}}
+      - -X main.commit={{.Commit}}
+    env:
+      - CGO_ENABLED=0
+archives:
+  - id: cloudbridge-client
+    builds_info:
+      mode: 493
+    name_template: cloudbridge-client_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats:
+      - tar.gz
+      - zip
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - src: README.md
+      - src: LICENSE
+      - src: ./packaging/linux/cloudbridge-client.service
+      - src: ./packaging/common/install.sh
+      - src: ./packaging/common/windows-service.md
+      - src: ./packaging/common/Architecture.md
+      - src: ./packaging/common/config.yaml
+nfpms:
+  - file_name_template: '{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}'
+    package_name: cloudbridge-client
+    contents:
+      - src: ./packaging/linux/cloudbridge-client.service
+        dst: /lib/systemd/system/cloudbridge-client.service
+        type: config|noreplace
+        file_info:
+          mode: 420
+      - src: ./packaging/common/config.yaml
+        dst: /etc/cloudbridge-client/config.yaml
+        type: config|noreplace
+      - src: ./README.md
+        dst: /usr/share/doc/cloudbridge-client/README.md
+      - src: ./LICENSE
+        dst: /usr/share/doc/cloudbridge-client/LICENSE
+      - src: ./packaging/common/Architecture.md
+        dst: /usr/share/doc/cloudbridge-client/Architecture.md
+      - src: ./packaging/common/install.sh
+        dst: /usr/share/cloudbridge-client/install.sh
+        file_info:
+          mode: 493
+    scripts:
+      postinstall: ./packaging/linux/postinstall.sh
+      preremove: ./packaging/linux/preremove.sh
+    id: cloudbridge-client-linux
+    formats:
+      - deb
+      - rpm
+    vendor: 2GC Dev
+    homepage: https://github.com/2gc-dev/relay-client
+    maintainer: 2GC Dev <dev@2gc.ru>
+    description: CloudBridge Relay Client for secure peer-to-peer corporate networks
+    license: MIT
+    bindir: /usr/bin
+    libdirs:
+      header: /usr/include
+      carchive: /usr/lib
+      cshared: /usr/lib
+snapshot:
+  version_template: '{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}'
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+docker_digest:
+  name_template: digests.txt
+changelog:
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+  sort: asc
+  format: '{{ .SHA }} {{ .Message }}'
+dist: dist
+env_files:
+  github_token: ~/.config/goreleaser/github_token
+  gitlab_token: ~/.config/goreleaser/gitlab_token
+  gitea_token: ~/.config/goreleaser/gitea_token
+before:
+  hooks:
+    - go mod download
+    - go mod tidy
+source:
+  name_template: '{{ .ProjectName }}-{{ .Version }}'
+  format: tar.gz
+gomod:
+  gobinary: go
+announce:
+  twitter:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+  mastodon:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+    server: ""
+  reddit:
+    title_template: '{{ .ProjectName }} {{ .Tag }} is out!'
+    url_template: '{{ .ReleaseURL }}'
+  slack:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+    username: GoReleaser
+  discord:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+    author: GoReleaser
+    color: "3888754"
+    icon_url: https://goreleaser.com/static/avatar.png
+  teams:
+    title_template: '{{ .ProjectName }} {{ .Tag }} is out!'
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+    color: '#2D313E'
+    icon_url: https://goreleaser.com/static/avatar.png
+  smtp:
+    subject_template: '{{ .ProjectName }} {{ .Tag }} is out!'
+    body_template: 'You can view details from: {{ .ReleaseURL }}'
+  mattermost:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+    title_template: '{{ .ProjectName }} {{ .Tag }} is out!'
+    username: GoReleaser
+  linkedin:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+  telegram:
+    message_template: '{{ mdv2escape .ProjectName }} {{ mdv2escape .Tag }} is out{{ mdv2escape "!" }} Check it out at {{ mdv2escape .ReleaseURL }}'
+    parse_mode: MarkdownV2
+  webhook:
+    message_template: '{ "message": "{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}"}'
+    content_type: application/json; charset=utf-8
+    expected_status_codes:
+      - 200
+      - 201
+      - 202
+      - 204
+  opencollective:
+    title_template: '{{ .Tag }}'
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out!<br/>Check it out at <a href="{{ .ReleaseURL }}">{{ .ReleaseURL }}</a>'
+  bluesky:
+    message_template: '{{ .ProjectName }} {{ .Tag }} is out! Check it out at {{ .ReleaseURL }}'
+git:
+  tag_sort: -version:refname
+github_urls:
+  download: https://github.com
+gitlab_urls:
+  download: https://gitlab.com
