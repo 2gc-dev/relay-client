@@ -40,6 +40,10 @@ archives:
       - config.yaml
       - README.md
       - LICENSE
+      - cloudbridge-client.service
+      - windows-service.md
+      - install.sh
+      - Architecture.md
     name_template: "cloudbridge-client_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
