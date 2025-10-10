@@ -3,6 +3,7 @@ package performance
 import (
 	"os"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -85,9 +86,9 @@ func TestGetPerformanceStats(t *testing.T) {
 func TestMonitorPerformance(t *testing.T) {
 	optimizer := NewOptimizer(true)
 
-	callCount := 0
+	var callCount int64
 	callback := func(stats map[string]interface{}) {
-		callCount++
+		atomic.AddInt64(&callCount, 1)
 		if stats == nil {
 			t.Error("Expected stats to be non-nil")
 		}
@@ -105,13 +106,14 @@ func TestMonitorPerformance(t *testing.T) {
 	// Wait a bit more to ensure it's stopped
 	time.Sleep(20 * time.Millisecond)
 
-	initialCount := callCount
+	initialCount := atomic.LoadInt64(&callCount)
 
 	// Wait a bit more - should not increase
 	time.Sleep(20 * time.Millisecond)
 
-	if callCount != initialCount {
-		t.Error("Expected monitoring to stop after calling stop function")
+	finalCount := atomic.LoadInt64(&callCount)
+	if finalCount != initialCount {
+		t.Errorf("Expected callCount to remain %d, got %d", initialCount, finalCount)
 	}
 }
 
