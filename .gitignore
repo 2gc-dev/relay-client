@@ -35,6 +35,7 @@ Thumbs.db
 # Config files with secrets
 config-local.yaml
 config-prod.yaml
+config-test.yaml
 *.pem
 *.key
 *.crt
