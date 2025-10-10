@@ -230,6 +230,7 @@ msi-package:
 	@cp README.md msi-build/
 	@cp LICENSE msi-build/
 	@cp windows-service.md msi-build/
+	@cp MSI_INSTALLATION.md msi-build/
 	@cp install.sh msi-build/
 	
 	# Generate UUIDs for WiX
@@ -250,22 +251,33 @@ msi-package:
 	MAIN_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
 	DOC_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
 	MENU_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	SERVICE_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	CONFIG_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
 	echo "<?xml version=\"1.0\"?>" > msi-build/cloudbridge-client.wxs; \
 	echo "<Wix xmlns=\"http://schemas.microsoft.com/wix/2006/wi\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "  <Product Id=\"$$PRODUCT_ID\" Name=\"CloudBridge Client\" Version=\"$(WIX_VERSION)\" Manufacturer=\"2GC Dev\" Language=\"1033\" UpgradeCode=\"$$UPGRADE_ID\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "    <Package InstallerVersion=\"200\" Compressed=\"yes\" InstallScope=\"perMachine\" Comments=\"CloudBridge Relay Client for P2P mesh networking\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "    <Media Id=\"1\" Cabinet=\"product.cab\" EmbedCab=\"yes\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "    <MajorUpgrade DowngradeErrorMessage=\"A later version of CloudBridge Client is already installed.\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "    <Property Id=\"WIX_ACCOUNT_LOCALSYSTEM\">NT AUTHORITY\\LocalService</Property>" >> msi-build/cloudbridge-client.wxs; \
 	echo "    <Directory Id=\"TARGETDIR\" Name=\"SourceDir\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "      <Directory Id=\"ProgramFilesFolder\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "        <Directory Id=\"INSTALLFOLDER\" Name=\"CloudBridge Client\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "          <Component Id=\"MainExecutable\" Guid=\"$$MAIN_GUID\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "            <File Id=\"cloudbridge-client.exe\" Source=\"cloudbridge-client.exe\" KeyPath=\"yes\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
+	echo "          <Component Id=\"ConfigFile\" Guid=\"$$CONFIG_GUID\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"config.yaml\" Source=\"config.yaml\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
+	echo "          <Component Id=\"WindowsService\" Guid=\"$$SERVICE_GUID\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <ServiceInstall Id=\"CloudBridgeService\" Type=\"ownProcess\" Name=\"CloudBridgeClient\" DisplayName=\"CloudBridge Relay Client\" Description=\"CloudBridge Relay Client for P2P mesh networking\" Start=\"auto\" Account=\"LocalSystem\" ErrorControl=\"normal\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <ServiceControl Id=\"CloudBridgeService\" Start=\"install\" Stop=\"both\" Remove=\"uninstall\" Name=\"CloudBridgeClient\" Wait=\"yes\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
 	echo "          <Component Id=\"Documentation\" Guid=\"$$DOC_GUID\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "            <File Id=\"README.md\" Source=\"README.md\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "            <File Id=\"LICENSE\" Source=\"LICENSE\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "            <File Id=\"windows-service.md\" Source=\"windows-service.md\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"MSI_INSTALLATION.md\" Source=\"MSI_INSTALLATION.md\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "            <File Id=\"install.sh\" Source=\"install.sh\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
 	echo "        </Directory>" >> msi-build/cloudbridge-client.wxs; \
@@ -281,6 +293,8 @@ msi-package:
 	echo "    </Directory>" >> msi-build/cloudbridge-client.wxs; \
 	echo "    <Feature Id=\"ProductFeature\" Title=\"CloudBridge Client\" Level=\"1\">" >> msi-build/cloudbridge-client.wxs; \
 	echo "      <ComponentRef Id=\"MainExecutable\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <ComponentRef Id=\"ConfigFile\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <ComponentRef Id=\"WindowsService\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "      <ComponentRef Id=\"Documentation\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "      <ComponentRef Id=\"ProgramMenuDir\" />" >> msi-build/cloudbridge-client.wxs; \
 	echo "    </Feature>" >> msi-build/cloudbridge-client.wxs; \
