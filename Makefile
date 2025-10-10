@@ -227,35 +227,68 @@ msi-package:
 	@echo "Creating MSI package for $(ARCH)..."
 	@mkdir -p msi-build
 	@cp $(BINARY_NAME).exe msi-build/
-	@cp cloudbridge-client.service msi-build/
 	@cp README.md msi-build/
 	@cp LICENSE msi-build/
+	@cp windows-service.md msi-build/
 	@cp install.sh msi-build/
 	
-	# Create WiX source file
-	@echo "<?xml version=\"1.0\"?>" > msi-build/cloudbridge-client.wxs
-	@echo "<Wix xmlns=\"http://schemas.microsoft.com/wix/2006/wi\">" >> msi-build/cloudbridge-client.wxs
-	@echo "  <Product Id=\"*\" Name=\"CloudBridge Client\" Version=\"$(WIX_VERSION)\" Manufacturer=\"2GC Dev\" Language=\"1033\">" >> msi-build/cloudbridge-client.wxs
-	@echo "    <Package InstallerVersion=\"200\" Compressed=\"yes\" InstallScope=\"perMachine\" />" >> msi-build/cloudbridge-client.wxs
-	@echo "    <Media Id=\"1\" Cabinet=\"product.cab\" EmbedCab=\"yes\" />" >> msi-build/cloudbridge-client.wxs
-	@echo "    <Directory Id=\"TARGETDIR\" Name=\"SourceDir\">" >> msi-build/cloudbridge-client.wxs
-	@echo "      <Directory Id=\"ProgramFilesFolder\">" >> msi-build/cloudbridge-client.wxs
-	@echo "        <Directory Id=\"INSTALLFOLDER\" Name=\"CloudBridge Client\">" >> msi-build/cloudbridge-client.wxs
-	@echo "          <Component Id=\"MainExecutable\" Guid=\"*\">" >> msi-build/cloudbridge-client.wxs
-	@echo "            <File Id=\"cloudbridge-client.exe\" Source=\"cloudbridge-client.exe\" KeyPath=\"yes\" />" >> msi-build/cloudbridge-client.wxs
-	@echo "          </Component>" >> msi-build/cloudbridge-client.wxs
-	@echo "        </Directory>" >> msi-build/cloudbridge-client.wxs
-	@echo "      </Directory>" >> msi-build/cloudbridge-client.wxs
-	@echo "    </Directory>" >> msi-build/cloudbridge-client.wxs
-	@echo "    <Feature Id=\"ProductFeature\" Title=\"CloudBridge Client\" Level=\"1\">" >> msi-build/cloudbridge-client.wxs
-	@echo "      <ComponentRef Id=\"MainExecutable\" />" >> msi-build/cloudbridge-client.wxs
-	@echo "    </Feature>" >> msi-build/cloudbridge-client.wxs
-	@echo "  </Product>" >> msi-build/cloudbridge-client.wxs
-	@echo "</Wix>" >> msi-build/cloudbridge-client.wxs
+	# Generate UUIDs for WiX
+	@PRODUCT_ID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	UPGRADE_ID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	MAIN_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	DOC_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	MENU_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	echo "Product ID: $$PRODUCT_ID"; \
+	echo "Upgrade ID: $$UPGRADE_ID"; \
+	echo "Main GUID: $$MAIN_GUID"; \
+	echo "Doc GUID: $$DOC_GUID"; \
+	echo "Menu GUID: $$MENU_GUID"
 	
-	# Build MSI (requires WiX Toolset)
-	@candle msi-build/cloudbridge-client.wxs -o msi-build/cloudbridge-client.wixobj
-	@light msi-build/cloudbridge-client.wixobj -o $(BINARY_NAME)_$(VERSION)_windows_$(ARCH).msi
+	# Create WiX source file with enhanced features
+	@PRODUCT_ID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	UPGRADE_ID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	MAIN_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	DOC_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	MENU_GUID=$$(uuidgen | tr '[:lower:]' '[:upper:]'); \
+	echo "<?xml version=\"1.0\"?>" > msi-build/cloudbridge-client.wxs; \
+	echo "<Wix xmlns=\"http://schemas.microsoft.com/wix/2006/wi\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "  <Product Id=\"$$PRODUCT_ID\" Name=\"CloudBridge Client\" Version=\"$(WIX_VERSION)\" Manufacturer=\"2GC Dev\" Language=\"1033\" UpgradeCode=\"$$UPGRADE_ID\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "    <Package InstallerVersion=\"200\" Compressed=\"yes\" InstallScope=\"perMachine\" Comments=\"CloudBridge Relay Client for P2P mesh networking\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "    <Media Id=\"1\" Cabinet=\"product.cab\" EmbedCab=\"yes\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "    <MajorUpgrade DowngradeErrorMessage=\"A later version of CloudBridge Client is already installed.\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "    <Directory Id=\"TARGETDIR\" Name=\"SourceDir\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <Directory Id=\"ProgramFilesFolder\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "        <Directory Id=\"INSTALLFOLDER\" Name=\"CloudBridge Client\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "          <Component Id=\"MainExecutable\" Guid=\"$$MAIN_GUID\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"cloudbridge-client.exe\" Source=\"cloudbridge-client.exe\" KeyPath=\"yes\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
+	echo "          <Component Id=\"Documentation\" Guid=\"$$DOC_GUID\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"README.md\" Source=\"README.md\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"LICENSE\" Source=\"LICENSE\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"windows-service.md\" Source=\"windows-service.md\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <File Id=\"install.sh\" Source=\"install.sh\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
+	echo "        </Directory>" >> msi-build/cloudbridge-client.wxs; \
+	echo "      </Directory>" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <Directory Id=\"ProgramMenuFolder\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "        <Directory Id=\"ProgramMenuDir\" Name=\"CloudBridge Client\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "          <Component Id=\"ProgramMenuDir\" Guid=\"$$MENU_GUID\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <RemoveFolder Id=\"ProgramMenuDir\" On=\"uninstall\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "            <RegistryValue Root=\"HKCU\" Key=\"Software\\CloudBridge Client\" Name=\"installed\" Type=\"integer\" Value=\"1\" KeyPath=\"yes\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "          </Component>" >> msi-build/cloudbridge-client.wxs; \
+	echo "        </Directory>" >> msi-build/cloudbridge-client.wxs; \
+	echo "      </Directory>" >> msi-build/cloudbridge-client.wxs; \
+	echo "    </Directory>" >> msi-build/cloudbridge-client.wxs; \
+	echo "    <Feature Id=\"ProductFeature\" Title=\"CloudBridge Client\" Level=\"1\">" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <ComponentRef Id=\"MainExecutable\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <ComponentRef Id=\"Documentation\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "      <ComponentRef Id=\"ProgramMenuDir\" />" >> msi-build/cloudbridge-client.wxs; \
+	echo "    </Feature>" >> msi-build/cloudbridge-client.wxs; \
+	echo "  </Product>" >> msi-build/cloudbridge-client.wxs; \
+	echo "</Wix>" >> msi-build/cloudbridge-client.wxs
+	
+	# Build MSI using wixl (simpler than WiX Toolset)
+	@wixl --define Version=$(WIX_VERSION) --define Path=$(BINARY_NAME).exe --output $(BINARY_NAME)_$(VERSION)_windows_$(ARCH).msi msi-build/cloudbridge-client.wxs
 	@rm -rf msi-build
 
 # DMG package (macOS)
