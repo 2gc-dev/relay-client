@@ -42,6 +42,3 @@ config-test.yaml
 
 # Test scripts output
 test-*.sh.log
-
-# Version files
-tag.txt
