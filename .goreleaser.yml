@@ -1,6 +1,8 @@
 # GoReleaser configuration for CloudBridge Client
 # https://goreleaser.com/
 
+version: 2
+
 before:
   hooks:
     - go mod download
@@ -43,22 +45,8 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
-# Cosign signing for supply chain security
-cosigns:
-  - artifacts: all
-    signature: '${artifact}.sig'
-    certificate: '${artifact}.pem'
-    env:
-      - COSIGN_PRIVATE_KEY
-      - COSIGN_PASSWORD
-
-# SBOM generation for supply chain transparency
-sboms:
-  - id: cloudbridge-client-sbom
-    artifacts: archive
-    documents:
-      - '{{ .ProjectName }}_sbom.spdx.json'
-      - '{{ .ProjectName }}_sbom.cyclonedx.json'
+# Note: Cosign signing and SBOM generation will be added in future releases
+# when GoReleaser supports these features in the current version
 
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
