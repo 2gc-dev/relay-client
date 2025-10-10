@@ -33,6 +33,54 @@ Cross-platform client for CloudBridge Relay P2P mesh networking.
    ./cloudbridge-client wireguard status --config config.yaml --token YOUR_JWT_TOKEN
    ```
 
+## Security & Secrets
+
+**Production Security Best Practices:**
+
+1. **Environment Variables** (Recommended):
+   ```bash
+   export CBR_AUTH_TOKEN="your-jwt-token"
+   export CBR_RELAY_HOST="your-relay-server.com"
+   export CBR_RELAY_PORT="8081"
+   ./cloudbridge-client p2p --config config.yaml
+   ```
+
+2. **OS Keyring Integration**:
+   - **Windows**: Uses Windows Credential Manager
+   - **macOS**: Uses Keychain Access
+   - **Linux**: Uses libsecret (GNOME Keyring/KDE Wallet)
+
+3. **File Permissions**:
+   ```bash
+   chmod 600 config.yaml  # Restrict config file access
+   chown $USER:$USER config.yaml
+   ```
+
+4. **Token Rotation**:
+   - Use short-lived JWT tokens (1-24 hours)
+   - Implement automatic token refresh
+   - Rotate tokens regularly
+
+## Verify Release
+
+**Before running, verify the release integrity:**
+
+1. **Download checksums**:
+   ```bash
+   curl -L https://github.com/2gc-dev/relay-client/releases/latest/download/checksums.txt
+   ```
+
+2. **Verify binary**:
+   ```bash
+   sha256sum -c checksums.txt
+   ```
+
+3. **Verify signature** (if available):
+   ```bash
+   cosign verify-blob --certificate-identity="*" --certificate-oidc-issuer="*" \
+     --signature cloudbridge-client-linux-amd64.sig cloudbridge-client-linux-amd64
+   ```
+
 ## Configuration Files
 
 - `config-example.yaml` - Configuration template
