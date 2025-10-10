@@ -447,11 +447,10 @@ func runWireGuardConfig(cmd *cobra.Command, args []string) error {
 		Secret:         cfg.Auth.Secret,
 		FallbackSecret: cfg.Auth.FallbackSecret,
 		SkipValidation: cfg.Auth.SkipValidation,
-		Keycloak: &auth.KeycloakConfig{
-			ServerURL: cfg.Auth.Keycloak.ServerURL,
-			Realm:     cfg.Auth.Keycloak.Realm,
-			ClientID:  cfg.Auth.Keycloak.ClientID,
-			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		OIDC: &auth.OIDCConfig{
+			IssuerURL: cfg.Auth.OIDC.IssuerURL,
+			Audience:  cfg.Auth.OIDC.Audience,
+			JWKSURL:   cfg.Auth.OIDC.JWKSURL,
 		},
 	})
 	if err != nil {
@@ -535,11 +534,10 @@ func runWireGuardStatus(cmd *cobra.Command, args []string) error {
 		Secret:         cfg.Auth.Secret,
 		FallbackSecret: cfg.Auth.FallbackSecret,
 		SkipValidation: cfg.Auth.SkipValidation,
-		Keycloak: &auth.KeycloakConfig{
-			ServerURL: cfg.Auth.Keycloak.ServerURL,
-			Realm:     cfg.Auth.Keycloak.Realm,
-			ClientID:  cfg.Auth.Keycloak.ClientID,
-			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		OIDC: &auth.OIDCConfig{
+			IssuerURL: cfg.Auth.OIDC.IssuerURL,
+			Audience:  cfg.Auth.OIDC.Audience,
+			JWKSURL:   cfg.Auth.OIDC.JWKSURL,
 		},
 	})
 	if err != nil {
@@ -835,11 +833,10 @@ func runP2P(cmd *cobra.Command, args []string) error {
 		Secret:         cfg.Auth.Secret,
 		FallbackSecret: cfg.Auth.FallbackSecret,
 		SkipValidation: cfg.Auth.SkipValidation,
-		Keycloak: &auth.KeycloakConfig{
-			ServerURL: cfg.Auth.Keycloak.ServerURL,
-			Realm:     cfg.Auth.Keycloak.Realm,
-			ClientID:  cfg.Auth.Keycloak.ClientID,
-			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		OIDC: &auth.OIDCConfig{
+			IssuerURL: cfg.Auth.OIDC.IssuerURL,
+			Audience:  cfg.Auth.OIDC.Audience,
+			JWKSURL:   cfg.Auth.OIDC.JWKSURL,
 		},
 	})
 	if err != nil {
@@ -909,12 +906,12 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	}()
 
 	log.Printf("P2P mesh started successfully")
-	
+
 	// Check L3-overlay network status
 	if p2pManager.IsL3OverlayReady() {
-		log.Printf("L3-overlay network ready: Peer IP=%s, Tenant CIDR=%s", 
+		log.Printf("L3-overlay network ready: Peer IP=%s, Tenant CIDR=%s",
 			p2pManager.GetPeerIP(), p2pManager.GetTenantCIDR())
-		
+
 		// Display WireGuard configuration
 		if config := p2pManager.GetWireGuardConfigString(); config != "" {
 			log.Printf("WireGuard configuration available (length: %d chars)", len(config))
@@ -922,7 +919,7 @@ func runP2P(cmd *cobra.Command, args []string) error {
 	} else {
 		log.Printf("L3-overlay network not ready yet")
 	}
-	
+
 	log.Printf("Press Ctrl+C to stop the client gracefully")
 
 	// Wait for shutdown signal

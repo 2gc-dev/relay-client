@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -67,32 +68,29 @@ type NetworkConfig struct {
 type AuthManager struct {
 	config     *AuthConfig
 	jwtSecret  []byte
-	publicKey  *rsa.PublicKey
 	httpClient *http.Client
 
-	// JWKS support for Keycloak
-	jwksURL     string
-	jwksKeys    map[string]*rsa.PublicKey // kid -> key
-	jwksFetched time.Time
-	jwksTTL     time.Duration
-	mu          sync.RWMutex
+	// JWKS support for OIDC
+	jwksURL   string
+	jwksCache map[string]interface{} // kid -> *rsa.PublicKey | *ecdsa.PublicKey
+	jwksMu    sync.RWMutex
 }
 
 // AuthConfig contains authentication configuration
 type AuthConfig struct {
-	Type           string          `json:"type"`
-	Secret         string          `json:"secret"`
-	FallbackSecret string          `json:"fallback_secret,omitempty"`
-	SkipValidation bool            `json:"skip_validation,omitempty"`
-	Keycloak       *KeycloakConfig `json:"keycloak,omitempty"`
+	Type           string      `json:"type"`                      // "jwt" | "oidc"
+	Secret         string      `json:"secret"`                    // для "jwt"
+	FallbackSecret string      `json:"fallback_secret,omitempty"` // для "jwt"
+	SkipValidation bool        `json:"skip_validation,omitempty"`
+	OIDC           *OIDCConfig `json:"oidc,omitempty"`
 }
 
-// KeycloakConfig contains Keycloak-specific configuration
-type KeycloakConfig struct {
-	ServerURL string `json:"server_url"`
-	Realm     string `json:"realm"`
-	ClientID  string `json:"client_id"`
-	JWKSURL   string `json:"jwks_url"`
+// OIDCConfig for Zitadel/any OIDC IdP
+type OIDCConfig struct {
+	IssuerURL string `json:"issuer_url"`         // напр. https://<your-zitadel-domain>
+	Audience  string `json:"audience"`           // ваш client_id или ожидаемая aud
+	JWKSURL   string `json:"jwks_url,omitempty"` // опционально, иначе из discovery
+	// опционально можно добавить: AllowedAlgs []string
 }
 
 // JWKS represents JSON Web Key Set
@@ -117,6 +115,7 @@ func NewAuthManager(config *AuthConfig) (*AuthManager, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		jwksCache: make(map[string]interface{}),
 	}
 
 	switch config.Type {
@@ -131,15 +130,12 @@ func NewAuthManager(config *AuthConfig) (*AuthManager, error) {
 			am.jwtSecret = []byte(config.Secret)
 		}
 
-	case "keycloak":
-		if config.Keycloak == nil {
-			return nil, fmt.Errorf("keycloak configuration is required")
+	case "oidc":
+		if config.OIDC == nil || config.OIDC.IssuerURL == "" {
+			return nil, fmt.Errorf("oidc configuration is required")
 		}
-		// Initialize JWKS support
-		am.jwksTTL = 5 * time.Minute
-		am.jwksKeys = make(map[string]*rsa.PublicKey)
-		if err := am.setupKeycloak(); err != nil {
-			return nil, fmt.Errorf("failed to setup keycloak: %w", err)
+		if err := am.setupOIDC(); err != nil {
+			return nil, fmt.Errorf("failed to setup oidc: %w", err)
 		}
 
 	default:
@@ -149,22 +145,38 @@ func NewAuthManager(config *AuthConfig) (*AuthManager, error) {
 	return am, nil
 }
 
-// setupKeycloak initializes Keycloak authentication
-func (am *AuthManager) setupKeycloak() error {
-	if am.config.Keycloak.JWKSURL == "" {
-		am.jwksURL = fmt.Sprintf(
-			"%s/realms/%s/protocol/openid-connect/certs",
-			am.config.Keycloak.ServerURL,
-			am.config.Keycloak.Realm,
-		)
+// setupOIDC: discovery + JWKS
+func (am *AuthManager) setupOIDC() error {
+	// 1) discovery, если jwks_url не задан
+	if am.config.OIDC.JWKSURL == "" {
+		wk := struct {
+			JWKSURL string `json:"jwks_uri"`
+			Issuer  string `json:"issuer"`
+		}{}
+		wellKnown := strings.TrimRight(am.config.OIDC.IssuerURL, "/") + "/.well-known/openid-configuration"
+		resp, err := am.httpClient.Get(wellKnown)
+		if err != nil {
+			return fmt.Errorf("oidc discovery failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("oidc discovery bad status: %s", resp.Status)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&wk); err != nil {
+			return fmt.Errorf("oidc discovery decode failed: %w", err)
+		}
+		if wk.JWKSURL == "" {
+			return fmt.Errorf("jwks_uri not found in discovery")
+		}
+		am.jwksURL = wk.JWKSURL
 	} else {
-		am.jwksURL = am.config.Keycloak.JWKSURL
+		am.jwksURL = am.config.OIDC.JWKSURL
 	}
-
-	return am.refreshJWKS() // первичная загрузка
+	// 2) начальная загрузка JWKS (кэш по kid)
+	return am.refreshJWKS()
 }
 
-// fetchJWKS fetches JSON Web Key Set from Keycloak
+// fetchJWKS fetches JSON Web Key Set from OIDC provider
 func (am *AuthManager) fetchJWKS() (*JWKS, error) {
 	resp, err := am.httpClient.Get(am.jwksURL)
 	if err != nil {
@@ -188,34 +200,36 @@ func (am *AuthManager) fetchJWKS() (*JWKS, error) {
 	return &jwks, nil
 }
 
-// jwkToRSAPublicKey converts JWK to RSA public key
-func (am *AuthManager) jwkToRSAPublicKey(jwk JWK) (*rsa.PublicKey, error) {
-	if jwk.Kty != "RSA" {
+// jwkToPublicKey converts JWK to public key (RSA/ECDSA)
+func jwkToPublicKey(jwk JWK) (interface{}, error) {
+	switch jwk.Kty {
+	case "RSA":
+		nBytes, err := base64.RawURLEncoding.DecodeString(jwk.N)
+		if err != nil {
+			return nil, fmt.Errorf("decode n: %w", err)
+		}
+		eBytes, err := base64.RawURLEncoding.DecodeString(jwk.E)
+		if err != nil {
+			return nil, fmt.Errorf("decode e: %w", err)
+		}
+		eInt := 0
+		for _, b := range eBytes {
+			eInt = (eInt << 8) | int(b)
+		}
+		if eInt == 0 {
+			return nil, fmt.Errorf("invalid exponent")
+		}
+		pub := &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: eInt}
+		if _, err := x509.MarshalPKIXPublicKey(pub); err != nil {
+			return nil, fmt.Errorf("marshal rsa: %w", err)
+		}
+		return pub, nil
+	case "EC":
+		// Zitadel по умолчанию RS256, но поддержка EC — на будущее.
+		return nil, fmt.Errorf("EC JWK not supported in this build")
+	default:
 		return nil, fmt.Errorf("unsupported kty: %s", jwk.Kty)
 	}
-
-	// N и E — base64url без padding
-	nb, err := base64.RawURLEncoding.DecodeString(jwk.N)
-	if err != nil {
-		return nil, fmt.Errorf("decode N: %w", err)
-	}
-	eb, err := base64.RawURLEncoding.DecodeString(jwk.E)
-	if err != nil {
-		return nil, fmt.Errorf("decode E: %w", err)
-	}
-
-	// E — big-endian без знака
-	var eInt int
-	for _, b := range eb {
-		eInt = (eInt << 8) | int(b)
-	}
-	if eInt == 0 {
-		// по умолчанию обычно 65537
-		eInt = 65537
-	}
-
-	n := new(big.Int).SetBytes(nb)
-	return &rsa.PublicKey{N: n, E: eInt}, nil
 }
 
 // refreshJWKS загружает и кеширует JWKS ключи
@@ -224,49 +238,22 @@ func (am *AuthManager) refreshJWKS() error {
 	if err != nil {
 		return err
 	}
-	keys := make(map[string]*rsa.PublicKey, len(jwks.Keys))
+	cache := make(map[string]interface{})
 	for _, k := range jwks.Keys {
-		pk, err := am.jwkToRSAPublicKey(k)
+		if k.Kid == "" {
+			// пропускаем без kid
+			continue
+		}
+		pub, err := jwkToPublicKey(k)
 		if err != nil {
 			continue
 		}
-		if k.Kid != "" {
-			keys[k.Kid] = pk
-		}
+		cache[k.Kid] = pub
 	}
-	if len(keys) == 0 {
-		return fmt.Errorf("no usable RSA keys in JWKS")
-	}
-	am.mu.Lock()
-	am.jwksKeys = keys
-	am.jwksFetched = time.Now()
-	am.mu.Unlock()
+	am.jwksMu.Lock()
+	am.jwksCache = cache
+	am.jwksMu.Unlock()
 	return nil
-}
-
-// getKeyForToken получает ключ для токена по kid
-func (am *AuthManager) getKeyForToken(token *jwt.Token) (*rsa.PublicKey, error) {
-	kid, _ := token.Header["kid"].(string)
-	am.mu.RLock()
-	key := am.jwksKeys[kid]
-	fetched := am.jwksFetched
-	ttl := am.jwksTTL
-	am.mu.RUnlock()
-
-	if key != nil && time.Since(fetched) < ttl {
-		return key, nil
-	}
-	// Обновим JWKS и попробуем ещё раз:
-	if err := am.refreshJWKS(); err != nil {
-		return nil, fmt.Errorf("refresh jwks: %w", err)
-	}
-	am.mu.RLock()
-	key = am.jwksKeys[kid]
-	am.mu.RUnlock()
-	if key == nil {
-		return nil, fmt.Errorf("kid %q not found in JWKS", kid)
-	}
-	return key, nil
 }
 
 // ValidateToken validates a JWT token
@@ -274,8 +261,8 @@ func (am *AuthManager) ValidateToken(tokenString string) (*jwt.Token, error) {
 	switch am.config.Type {
 	case "jwt":
 		return am.validateJWTToken(tokenString)
-	case "keycloak":
-		return am.validateKeycloakToken(tokenString)
+	case "oidc":
+		return am.validateOIDCToken(tokenString)
 	default:
 		return nil, fmt.Errorf("unsupported authentication type")
 	}
@@ -346,88 +333,90 @@ func (am *AuthManager) validateJWTToken(tokenString string) (*jwt.Token, error) 
 	return nil, errors.NewRelayError(errors.ErrInvalidToken, "invalid JWT token")
 }
 
-// validateKeycloakToken validates a Keycloak token
-func (am *AuthManager) validateKeycloakToken(tokenString string) (*jwt.Token, error) {
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}), jwt.WithIssuedAt())
-	claims := jwt.MapClaims{} // или jwt.RegisteredClaims, если хотите строгую схему
-
-	token, err := parser.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-		return am.getKeyForToken(t)
-	})
+// validateOIDCToken validates an OIDC token
+func (am *AuthManager) validateOIDCToken(tokenString string) (*jwt.Token, error) {
+	parser := &jwt.Parser{}
+	// 1) прочитаем header без проверки, чтобы взять kid/alg
+	unverified, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+	if err == nil && unverified != nil {
+		// kid будет использован в keyFunc
+	}
+	// 2) функция подбора ключа
+	keyFunc := func(token *jwt.Token) (interface{}, error) {
+		// допустим только RSA/ECDSA (обычно RS256 для Zitadel)
+		switch token.Method.Alg() {
+		case jwt.SigningMethodRS256.Alg():
+			// ok
+		case jwt.SigningMethodES256.Alg():
+			// (если включите EC)
+		default:
+			return nil, fmt.Errorf("unexpected signing method: %s", token.Method.Alg())
+		}
+		kidHeader, _ := token.Header["kid"].(string)
+		am.jwksMu.RLock()
+		pub := am.jwksCache[kidHeader]
+		am.jwksMu.RUnlock()
+		if pub == nil {
+			// попробуем обновить JWKS (ротация ключей)
+			if err := am.refreshJWKS(); err != nil {
+				return nil, fmt.Errorf("jwks refresh failed: %w", err)
+			}
+			am.jwksMu.RLock()
+			pub = am.jwksCache[kidHeader]
+			am.jwksMu.RUnlock()
+			if pub == nil {
+				return nil, fmt.Errorf("public key not found for kid=%s", kidHeader)
+			}
+		}
+		return pub, nil
+	}
+	token, err := jwt.Parse(tokenString, keyFunc)
 	if err != nil {
-		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("keycloak token validation failed: %v", err))
+		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("oidc token validation failed: %v", err))
 	}
 	if !token.Valid {
-		return nil, errors.NewRelayError(errors.ErrInvalidToken, "Invalid Keycloak token")
+		return nil, errors.NewRelayError(errors.ErrInvalidToken, "Invalid OIDC token")
 	}
-
-	// Дополнительная валидация
-	if err := am.validateKeycloakClaims(token.Claims); err != nil {
+	if err := am.validateOIDCClaims(token.Claims); err != nil {
 		return nil, errors.NewRelayError(errors.ErrInvalidToken, fmt.Sprintf("Invalid claims: %v", err))
 	}
 	return token, nil
 }
 
-// validateKeycloakClaims validates Keycloak-specific claims
-func (am *AuthManager) validateKeycloakClaims(claims jwt.Claims) error {
-	mc, ok := claims.(jwt.MapClaims)
+// validateOIDCClaims validates OIDC-specific claims
+func (am *AuthManager) validateOIDCClaims(c jwt.Claims) error {
+	claims, ok := c.(jwt.MapClaims)
 	if !ok {
 		return fmt.Errorf("invalid claims type")
 	}
-
-	// Leeway 60s
-	now := time.Now().Unix()
-	if exp, ok := mc["exp"].(float64); ok && now > int64(exp)+60 {
-		return fmt.Errorf("token expired")
-	}
-	if nbf, ok := mc["nbf"].(float64); ok && now+60 < int64(nbf) {
-		return fmt.Errorf("token not yet valid")
-	}
-
 	// iss
-	if issuer, ok := mc["iss"].(string); ok {
-		expected := fmt.Sprintf("%s/realms/%s", am.config.Keycloak.ServerURL, am.config.Keycloak.Realm)
-		expected = strings.TrimRight(expected, "/")
-		if strings.TrimRight(issuer, "/") != expected {
-			return fmt.Errorf("invalid issuer: expected %s, got %s", expected, issuer)
+	if iss, ok := claims["iss"].(string); ok {
+		if !strings.HasPrefix(iss, am.config.OIDC.IssuerURL) {
+			return fmt.Errorf("invalid issuer: %s", iss)
 		}
-	} else {
-		return fmt.Errorf("issuer not present")
 	}
-
-	// aud (string or []string)
-	wantAud := am.config.Keycloak.ClientID
-	switch v := mc["aud"].(type) {
-	case string:
-		if v != wantAud {
-			return fmt.Errorf("invalid audience: expected %s, got %s", wantAud, v)
-		}
-	case []interface{}:
-		ok := false
-		for _, x := range v {
-			if s, _ := x.(string); s == wantAud {
-				ok = true
-				break
+	// aud (Zitadel может отдавать строку или массив)
+	if audRaw, ok := claims["aud"]; ok {
+		want := am.config.OIDC.Audience
+		switch v := audRaw.(type) {
+		case string:
+			if v != want {
+				return fmt.Errorf("invalid audience: %s", v)
+			}
+		case []interface{}:
+			found := false
+			for _, a := range v {
+				if s, ok := a.(string); ok && s == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("audience not found")
 			}
 		}
-		if !ok {
-			return fmt.Errorf("invalid audience: %s not in %v", wantAud, v)
-		}
-	case []string: // на всякий
-		ok := false
-		for _, s := range v {
-			if s == wantAud {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return fmt.Errorf("invalid audience: %s not in %v", wantAud, v)
-		}
-	default:
-		return fmt.Errorf("invalid audience claim type")
 	}
-
+	// exp/nbf проверяет сама библиотека при Parse, но можно дополнительно:
 	return nil
 }
 

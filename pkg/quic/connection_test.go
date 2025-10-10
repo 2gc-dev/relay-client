@@ -370,12 +370,12 @@ func TestContextCancellation(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Connection should be closed when context is cancelled
+	// Connection should be closed when context is canceled
 	select {
 	case <-conn.ctx.Done():
 		// Expected
 	case <-time.After(100 * time.Millisecond):
-		// Context is not cancelled yet, which is expected since we just created it
-		// This test is more about ensuring the context exists and can be cancelled
+		// Context is not canceled yet, which is expected since we just created it
+		// This test is more about ensuring the context exists and can be canceled
 	}
 }

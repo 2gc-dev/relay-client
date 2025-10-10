@@ -80,8 +80,10 @@ func setDefaults() {
 	viper.SetDefault("auth.type", "jwt")
 	viper.SetDefault("auth.fallback_secret", "")
 	viper.SetDefault("auth.skip_validation", false)
-	viper.SetDefault("auth.keycloak.enabled", false)
-	viper.SetDefault("auth.keycloak.server_url", "https://edge.2gc.ru") // Обновленный адрес Zitadel
+	// OIDC (Zitadel)
+	viper.SetDefault("auth.oidc.issuer_url", "") // напр. https://<your-zitadel>
+	viper.SetDefault("auth.oidc.audience", "")   // ваш client_id
+	// auth.secret используется только при type=jwt
 
 	// Rate limiting
 	viper.SetDefault("rate_limiting.enabled", true)
@@ -207,15 +209,12 @@ func validateConfig(c *types.Config) error {
 		return fmt.Errorf("JWT secret is required for JWT authentication")
 	}
 
-	if c.Auth.Keycloak.Enabled {
-		if c.Auth.Keycloak.ServerURL == "" {
-			return fmt.Errorf("keycloak server URL is required")
+	if c.Auth.Type == "oidc" {
+		if c.Auth.OIDC.IssuerURL == "" {
+			return fmt.Errorf("oidc issuer_url is required")
 		}
-		if c.Auth.Keycloak.Realm == "" {
-			return fmt.Errorf("keycloak realm is required")
-		}
-		if c.Auth.Keycloak.ClientID == "" {
-			return fmt.Errorf("keycloak client ID is required")
+		if c.Auth.OIDC.Audience == "" {
+			return fmt.Errorf("oidc audience (client_id) is required")
 		}
 	}
 
@@ -302,10 +301,9 @@ func substituteEnvVars(config *types.Config) {
 	// Substitute in auth config
 	config.Auth.Secret = substituteEnvVar(config.Auth.Secret)
 	config.Auth.FallbackSecret = substituteEnvVar(config.Auth.FallbackSecret)
-	config.Auth.Keycloak.ServerURL = substituteEnvVar(config.Auth.Keycloak.ServerURL)
-	config.Auth.Keycloak.Realm = substituteEnvVar(config.Auth.Keycloak.Realm)
-	config.Auth.Keycloak.ClientID = substituteEnvVar(config.Auth.Keycloak.ClientID)
-	config.Auth.Keycloak.JWKSURL = substituteEnvVar(config.Auth.Keycloak.JWKSURL)
+	config.Auth.OIDC.IssuerURL = substituteEnvVar(config.Auth.OIDC.IssuerURL)
+	config.Auth.OIDC.Audience = substituteEnvVar(config.Auth.OIDC.Audience)
+	config.Auth.OIDC.JWKSURL = substituteEnvVar(config.Auth.OIDC.JWKSURL)
 
 	// Substitute in relay config
 	config.Relay.Host = substituteEnvVar(config.Relay.Host)

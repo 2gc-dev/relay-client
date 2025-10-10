@@ -68,20 +68,18 @@ type TLSConfig struct {
 
 // AuthConfig contains authentication settings
 type AuthConfig struct {
-	Type           string         `mapstructure:"type"`
-	Token          string         `mapstructure:"token"`
-	Secret         string         `mapstructure:"secret"`
-	FallbackSecret string         `mapstructure:"fallback_secret"`
-	SkipValidation bool           `mapstructure:"skip_validation"`
-	Keycloak       KeycloakConfig `mapstructure:"keycloak"`
+	Type           string     `mapstructure:"type"`
+	Token          string     `mapstructure:"token"`
+	Secret         string     `mapstructure:"secret"`
+	FallbackSecret string     `mapstructure:"fallback_secret"`
+	SkipValidation bool       `mapstructure:"skip_validation"`
+	OIDC           OIDCConfig `mapstructure:"oidc"`
 }
 
-// KeycloakConfig contains Keycloak integration settings
-type KeycloakConfig struct {
-	Enabled   bool   `mapstructure:"enabled"`
-	ServerURL string `mapstructure:"server_url"`
-	Realm     string `mapstructure:"realm"`
-	ClientID  string `mapstructure:"client_id"`
+// OIDCConfig contains OIDC integration settings
+type OIDCConfig struct {
+	IssuerURL string `mapstructure:"issuer_url"`
+	Audience  string `mapstructure:"audience"`
 	JWKSURL   string `mapstructure:"jwks_url"`
 }
 

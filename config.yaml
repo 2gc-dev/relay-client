@@ -15,20 +15,18 @@ relay:
 
 # Authentication Configuration
 auth:
-  type: "jwt"
+  type: "oidc"                         # Используем OIDC вместо Keycloak
   token: "toke"
-  secret: "secret"
-  skip_validation: false                # CRITICAL: включить валидацию JWT
+  secret: "secret"                     # для fallback JWT
+  skip_validation: false               # CRITICAL: включить валидацию JWT
   disable_token_validation: false
   jwks_cache_ttl: "10m"                # TTL для JWKS кеша
-  audience: "cloudbridge"               # Ожидаемая аудитория
+  audience: "cloudbridge"              # Ожидаемая аудитория
   issuer: "https://edge.2gc.ru"        # Обновленный адрес Zitadel
-  keycloak:
-    enabled: true                      # Включить Keycloak/Zitadel аутентификацию
-    server_url: "https://edge.2gc.ru"  # Обновленный адрес Zitadel
-    realm: "cloudbridge"               # Realm для Zitadel
-    client_id: "cloudbridge-client"    # Client ID для Zitadel
-    jwks_url: "https://edge.2gc.ru/oauth/v2/keys"  # JWKS URL для Zitadel
+  oidc:
+    issuer_url: "https://edge.2gc.ru"  # OIDC Issuer URL для Zitadel
+    audience: "cloudbridge-client"     # Client ID для Zitadel
+    jwks_url: "https://edge.2gc.ru/oauth/v2/keys"  # JWKS URL для Zitadel (опционально, иначе из discovery)
 
 # P2P Configuration
 p2p:

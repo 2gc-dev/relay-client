@@ -98,11 +98,10 @@ func NewClient(cfg *types.Config, configPath string) (*Client, error) {
 		Secret:         cfg.Auth.Secret,
 		FallbackSecret: cfg.Auth.FallbackSecret,
 		SkipValidation: cfg.Auth.SkipValidation,
-		Keycloak: &auth.KeycloakConfig{
-			ServerURL: cfg.Auth.Keycloak.ServerURL,
-			Realm:     cfg.Auth.Keycloak.Realm,
-			ClientID:  cfg.Auth.Keycloak.ClientID,
-			JWKSURL:   cfg.Auth.Keycloak.JWKSURL,
+		OIDC: &auth.OIDCConfig{
+			IssuerURL: cfg.Auth.OIDC.IssuerURL,
+			Audience:  cfg.Auth.OIDC.Audience,
+			JWKSURL:   cfg.Auth.OIDC.JWKSURL,
 		},
 	})
 	if err != nil {
@@ -1087,12 +1086,6 @@ func (c *Client) initializeEnhancedComponents() {
 	c.probeManager = nil
 
 	c.logger.Info("Enhanced client components initialized successfully")
-}
-
-// setupSyntheticProbes настраивает synthetic probes
-func (c *Client) setupSyntheticProbes() {
-	// TODO: Настройка synthetic probes будет добавлена после создания пакетов
-	c.logger.Info("Synthetic probes setup placeholder")
 }
 
 // GetMASQUEClient возвращает MASQUE клиент
