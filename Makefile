@@ -221,6 +221,90 @@ rpm-package:
 	@mv rpmbuild/RPMS/*/$(RPM_PACKAGE_NAME)-*.rpm .
 	@rm -rf rpmbuild
 
+# DEB package (Linux)
+.PHONY: deb-package
+deb-package:
+	@echo "Creating DEB package for $(ARCH)..."
+	@mkdir -p deb-build
+	@cp $(BINARY_NAME) deb-build/
+	@cp README.md deb-build/
+	@cp LICENSE deb-build/
+	@cp cloudbridge-client.service deb-build/
+	@cp install.sh deb-build/
+	@cp config.yaml deb-build/
+	
+	# Create DEB package using fpm
+	@fpm -C deb-build -s dir -t deb \
+		--description 'CloudBridge Relay Client for P2P mesh networking' \
+		--vendor '2GC Dev' \
+		--license 'MIT License' \
+		--url 'https://github.com/2gc-dev/relay-client' \
+		-m '2GC Dev <dev@2gc.ru>' \
+		-a $(ARCH) -v $(VERSION) -n $(BINARY_NAME) \
+		--after-install install.sh \
+		$(BINARY_NAME)=/usr/bin/ \
+		README.md=/usr/share/doc/$(BINARY_NAME)/ \
+		LICENSE=/usr/share/doc/$(BINARY_NAME)/ \
+		cloudbridge-client.service=/etc/systemd/system/ \
+		config.yaml=/etc/$(BINARY_NAME)/ \
+		install.sh=/usr/share/$(BINARY_NAME)/
+	@rm -rf deb-build
+
+# RPM package (Linux)
+.PHONY: rpm-package
+rpm-package:
+	@echo "Creating RPM package for $(ARCH)..."
+	@mkdir -p rpm-build
+	@cp $(BINARY_NAME) rpm-build/
+	@cp README.md rpm-build/
+	@cp LICENSE rpm-build/
+	@cp cloudbridge-client.service rpm-build/
+	@cp install.sh rpm-build/
+	@cp config.yaml rpm-build/
+	
+	# Create RPM package using fpm
+	@fpm -C rpm-build -s dir -t rpm \
+		--description 'CloudBridge Relay Client for P2P mesh networking' \
+		--vendor '2GC Dev' \
+		--license 'MIT License' \
+		--url 'https://github.com/2gc-dev/relay-client' \
+		-m '2GC Dev <dev@2gc.ru>' \
+		-a $(ARCH) -v $(VERSION) -n $(BINARY_NAME) \
+		--after-install install.sh \
+		$(BINARY_NAME)=/usr/bin/ \
+		README.md=/usr/share/doc/$(BINARY_NAME)/ \
+		LICENSE=/usr/share/doc/$(BINARY_NAME)/ \
+		cloudbridge-client.service=/etc/systemd/system/ \
+		config.yaml=/etc/$(BINARY_NAME)/ \
+		install.sh=/usr/share/$(BINARY_NAME)/
+	@rm -rf rpm-build
+
+# PKG package (macOS)
+.PHONY: pkg-package
+pkg-package:
+	@echo "Creating PKG package for $(ARCH)..."
+	@mkdir -p pkg-build
+	@cp $(BINARY_NAME) pkg-build/
+	@cp README.md pkg-build/
+	@cp LICENSE pkg-build/
+	@cp install.sh pkg-build/
+	@cp config.yaml pkg-build/
+	
+	# Create PKG package using fpm
+	@fpm -C pkg-build -s dir -t osxpkg \
+		--description 'CloudBridge Relay Client for P2P mesh networking' \
+		--vendor '2GC Dev' \
+		--license 'MIT License' \
+		--url 'https://github.com/2gc-dev/relay-client' \
+		-m '2GC Dev <dev@2gc.ru>' \
+		-a $(ARCH) -v $(VERSION) -n $(BINARY_NAME) \
+		$(BINARY_NAME)=/usr/local/bin/ \
+		README.md=/usr/local/share/doc/$(BINARY_NAME)/ \
+		LICENSE=/usr/local/share/doc/$(BINARY_NAME)/ \
+		config.yaml=/usr/local/etc/$(BINARY_NAME)/ \
+		install.sh=/usr/local/share/$(BINARY_NAME)/
+	@rm -rf pkg-build
+
 # MSI package (Windows)
 .PHONY: msi-package
 msi-package:
